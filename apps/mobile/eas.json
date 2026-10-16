@@ -11,7 +11,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://chessshorts-api.up.railway.app"
+        "EXPO_PUBLIC_API_URL": "https://chessshorts.onrender.com"
       }
     },
     "preview": {
@@ -20,7 +20,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://chessshorts-api.up.railway.app"
+        "EXPO_PUBLIC_API_URL": "https://chessshorts.onrender.com"
       }
     },
     "production": {
@@ -28,7 +28,7 @@
         "buildType": "aab"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://chessshorts-api.up.railway.app"
+        "EXPO_PUBLIC_API_URL": "https://chessshorts.onrender.com"
       }
     }
   },
