@@ -1,9 +1,16 @@
+import logging
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.db.base import init_db
 from app.api.routes import router as api_router
+
+# Make app loggers (incl. chessshorts.db diagnostics) visible in Render logs
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:%(name)s: %(message)s",
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

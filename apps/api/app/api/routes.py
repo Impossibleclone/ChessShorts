@@ -159,4 +159,11 @@ async def get_puzzle(
 
 @router.get("/health")
 async def health_check():
-    return {"status": "ok"}
+    from app.db.base import db_state
+
+    db = "ready" if db_state["ready"] else ("error" if db_state["error"] else "starting")
+    payload: dict = {"status": "ok", "db": db}
+    if db_state["error"]:
+        # safe to expose: first 200 chars, no secrets (we never store URLs here)
+        payload["db_error"] = db_state["error"][:200]
+    return payload
