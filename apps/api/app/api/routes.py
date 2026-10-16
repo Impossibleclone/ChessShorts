@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -162,8 +163,12 @@ async def health_check():
     from app.db.base import db_state
 
     db = "ready" if db_state["ready"] else ("error" if db_state["error"] else "starting")
-    payload: dict = {"status": "ok", "db": db}
+    payload: dict = {
+        "status": "ok",
+        "db": db,
+        "version": os.getenv("APP_VERSION", "dev")[:7],
+    }
     if db_state["error"]:
-        # safe to expose: first 200 chars, no secrets (we never store URLs here)
+        # safe to expose: no secrets (we never store URLs here)
         payload["db_error"] = db_state["error"][:200]
     return payload
