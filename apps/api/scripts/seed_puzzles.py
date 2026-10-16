@@ -5,21 +5,16 @@ Run after database is created: python scripts/seed_puzzles.py
 """
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-from app.db.base import Base
+from app.db.base import Base, make_engine
 from app.models import Puzzle
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/chessshorts"
-)
 
 # Sample puzzles from Lichess format: id, fen, moves (UCI), rating, popularity, themes
 SEED_PUZZLES = [
@@ -105,16 +100,14 @@ SEED_PUZZLES = [
     },
 ]
 
-async def seed():
-    engine = create_async_engine(DATABASE_URL, echo=False)
-    
+async def seed(db_url: str | None = None):
+    engine = make_engine(db_url)
+
     # Create tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    
-    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    
-    async with async_session() as session:
+
+    async with async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)() as session:
         async with session.begin():
             for p in SEED_PUZZLES:
                 puzzle = Puzzle(
@@ -132,4 +125,7 @@ async def seed():
     await engine.dispose()
 
 if __name__ == "__main__":
-    asyncio.run(seed())
+    from argparse import ArgumentParser
+    parser = ArgumentParser(description="Seed ChessShorts DB with sample puzzles")
+    parser.add_argument("--db-url", default=None, help="Postgres URL (defaults to DATABASE_URL env)")
+    asyncio.run(seed(parser.parse_args().db_url))

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import polars as pl
 import zstandard as zstd
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 from tqdm import tqdm
@@ -25,10 +25,8 @@ from tqdm import tqdm
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.db.base import Base
+from app.db.base import Base, make_engine
 from app.models import Puzzle
-
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/chessshorts")
 
 CHUNK_SIZE = 10000
 
@@ -148,14 +146,14 @@ async def main():
     parser.add_argument("--url", help="URL to download CSV.zst from")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of puzzles to import")
     parser.add_argument("--batch-size", type=int, default=CHUNK_SIZE, help="Batch size for inserts")
-    parser.add_argument("--db-url", default=DATABASE_URL, help="Database URL")
+    parser.add_argument("--db-url", default=None, help="Postgres URL (defaults to DATABASE_URL env)")
     
     args = parser.parse_args()
     
     if not args.file and not args.url:
         parser.error("Either --file or --url must be provided")
     
-    engine = create_async_engine(args.db_url, echo=False)
+    engine = make_engine(args.db_url)
     
     await create_tables(engine)
     
