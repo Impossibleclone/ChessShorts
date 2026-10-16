@@ -19,16 +19,19 @@ EASY_RATIO = 0.15
 HARD_RATIO = 0.15
 
 async def get_user_rating(db: AsyncSession, user_id: str) -> int:
-    """Get user's current estimated rating based on solved puzzles."""
-    result = await db.execute(
-        select(func.avg(Puzzle.rating))
+    """User's rating = avg rating of their last 20 solved puzzles."""
+    last_20 = (
+        select(Puzzle.rating, UserProgress.attempted_at)
         .join(UserProgress, UserProgress.puzzle_id == Puzzle.id)
         .where(
             UserProgress.user_id == user_id,
-            UserProgress.solved == True
+            UserProgress.solved == True,
         )
+        .order_by(UserProgress.attempted_at.desc())
         .limit(20)
+        .subquery()
     )
+    result = await db.execute(select(func.avg(last_20.c.rating)))
     avg_rating = result.scalar()
     return int(avg_rating) if avg_rating else DEFAULT_RATING
 

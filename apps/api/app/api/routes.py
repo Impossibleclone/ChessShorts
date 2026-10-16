@@ -109,15 +109,15 @@ async def get_user_stats(
     db: AsyncSession = Depends(get_db),
 ):
     """Get user statistics."""
-    # Total attempts
+    # Total attempts (UserProgress has a composite key — count rows, not an id)
     attempts_result = await db.execute(
-        select(func.count(UserProgress.id)).where(UserProgress.user_id == user_id)
+        select(func.count()).where(UserProgress.user_id == user_id)
     )
     total_attempts = attempts_result.scalar() or 0
-    
+
     # Solved count
     solved_result = await db.execute(
-        select(func.count(UserProgress.id)).where(
+        select(func.count()).where(
             UserProgress.user_id == user_id,
             UserProgress.solved == True
         )
