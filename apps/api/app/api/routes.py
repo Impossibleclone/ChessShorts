@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api/v1", tags=["feed"])
 
 @router.get("/feed", response_model=FeedResponse)
 async def get_feed(
-    user_id: str = Query(..., description="User ID"),
+    user_id: str = Query(..., alias="userId", description="User ID"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     limit: int = Query(10, ge=1, le=50, description="Page size"),
     db: AsyncSession = Depends(get_db),
