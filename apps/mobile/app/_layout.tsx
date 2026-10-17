@@ -244,14 +244,23 @@ function BootProbe() {
   );
 }
 
-/* Skia visual proof: paints a circle when the native Skia module is alive */
+/* Skia visual proof: paints a circle when the native Skia module is alive.
+ * Wrapped in ErrorBoundary because Skia prop validation throws during React
+ * render — a try/catch around createElement cannot contain it. (The first
+ * version of this demo passed `r` inside the `c` vector and white-screened
+ * the probe screen: Skia 1.5 CircleProps is `{ c?: Vector; r: number }`.) */
 function SkiaSample() {
   try {
     const Skia = require('@shopify/react-native-skia');
-    return React.createElement(
-      Skia.Canvas,
-      { style: { width: '100%', height: 110 } },
-      React.createElement(Skia.Circle, { c: { x: 55, y: 55, r: 36 }, color: '#7fd4ff' }),
+    const { ErrorBoundary } = require('@/components/ErrorBoundary');
+    return (
+      <ErrorBoundary>
+        {React.createElement(
+          Skia.Canvas,
+          { style: { width: '100%', height: 110 } },
+          React.createElement(Skia.Circle, { c: { x: 55, y: 55 }, r: 36, color: '#7fd4ff' }),
+        )}
+      </ErrorBoundary>
     );
   } catch (e: unknown) {
     return <Text style={styles.fail}>skia paint failed: {(e as Error)?.message}</Text>;

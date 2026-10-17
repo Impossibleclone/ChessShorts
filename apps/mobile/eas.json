@@ -21,7 +21,7 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://chessshorts.onrender.com",
-        "EXPO_PUBLIC_BOOT_PROBE": "true"
+        "EXPO_PUBLIC_BOOT_PROBE": "false"
       }
     },
     "production": {
