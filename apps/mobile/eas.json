@@ -20,7 +20,8 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://chessshorts.onrender.com"
+        "EXPO_PUBLIC_API_URL": "https://chessshorts.onrender.com",
+        "EXPO_BOOT_PROBE": "true"
       }
     },
     "production": {
