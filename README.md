@@ -141,7 +141,7 @@ EXPO_PUBLIC_BOOT_PROBE=true  # boot probe defaults ON when unset; set false for 
 - **Neon**: rotate leaked credentials; serve the app off the `-pooler` endpoint; bulk import off the direct one. `channel_binding=require` in the URL is harmless — the engine strips it.
 - **Render**: set `DATABASE_URL` as one line, no quotes/placeholders; redeploys are slow on free tier (~5–10 min), verify via `/health` `version`.
 - **Polars 2.x** cannot read `.csv.zst` natively here — the import script decompresses to a temp file first.
-- **expo-router needs `query-string`** as an explicit dependency under npm (SDK 52 quirk) — already in package.json.
+- **expo-router needs `query-string`** as an explicit dependency under npm (SDK 52 quirk) — and it must be the **v7 CJS shape** (`"query-string": "7.1.3"`, pinned exact). v8/v9 ship a CJS entry with only `{ __esModule, default }`; Metro bundles that shape, expo-router's forked `getPathFromState` calls `queryString.stringify(...)` on it, gets `undefined`, and throws `TypeError: undefined is not a function` mid-render of `BottomTabBar` → React unmounts the tree → plain white window. Don't bump this dependency.
 - These pitfalls were fixed; don't re-add reanimated to `app.json` plugins (Babel plugin alone is correct for this RN/SDK combo).
 
 ## License
