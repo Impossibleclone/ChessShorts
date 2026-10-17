@@ -43,7 +43,7 @@ if (errorUtils) {
 const probeEnv = (): string => {
   const env = globalThis as unknown as GlobalErrorStash & Record<string, string | undefined>;
   const envUrl = env.EXPO_PUBLIC_API_URL;
-  const probe = env.EXPO_BOOT_PROBE;
+  const probe = env.EXPO_PUBLIC_BOOT_PROBE;
   return `API → ${envUrl ?? '(EXPO_PUBLIC_API_URL missing!)'} · probe=${probe ?? 'false'}`;
 };
 
@@ -107,11 +107,35 @@ const steps: { name: string; run: () => string | void }[] = [
       require('@/store');
     },
   },
+  {
+    name: 'feed screen module',
+    run: () => {
+      require('@/feed/FeedScreen');
+    },
+  },
+  {
+    name: 'feed screen route (tabs)/feed',
+    run: () => {
+      require('./(tabs)/feed');
+    },
+  },
+  {
+    name: 'route (tabs)/profile',
+    run: () => {
+      require('./(tabs)/profile');
+    },
+  },
+  {
+    name: 'route index',
+    run: () => {
+      require('./index');
+    },
+  },
 ];
 
 export default function RootLayout() {
   const env = process.env as Record<string, string | undefined>;
-  const probe = env.EXPO_BOOT_PROBE === 'true';
+  const probe = env.EXPO_PUBLIC_BOOT_PROBE === 'true';
   return probe ? <BootProbe /> : <RealApp />;
 }
 

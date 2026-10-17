@@ -128,7 +128,7 @@ ENVIRONMENT=development
 
 ```env
 EXPO_PUBLIC_API_URL=https://chessshorts.onrender.com
-EXPO_BOOT_PROBE=true        # diag builds only; false for clean boot
+EXPO_PUBLIC_BOOT_PROBE=true  # diag builds only; must use EXPO_PUBLIC_* prefix for release inlining
 ```
 
 ## Deployment notes / gotchas learned
