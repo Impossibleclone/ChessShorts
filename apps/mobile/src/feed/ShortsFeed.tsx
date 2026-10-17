@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { usePuzzleFeed } from '@/hooks/usePuzzleFeed';
 import { PuzzleCard } from './PuzzleCard';
+import { CardBoundary } from './CardBoundary';
 
 /**
  * Shorts-style vertical puzzle feed.
@@ -118,14 +119,16 @@ export const ShortsFeed = () => {
           }
         >
           {puzzles.map((puzzle, i) => (
-            <PuzzleCard
-              key={puzzle.id}
-              puzzle={puzzle}
-              index={i}
-              scrollY={scrollY}
-              cardHeight={viewportHeight}
-              isActive={i === activeIndex}
-            />
+            <CardBoundary key={puzzle.id} height={viewportHeight}>
+              <PuzzleCard
+                puzzle={puzzle}
+                index={i}
+                scrollY={scrollY}
+                cardHeight={viewportHeight}
+                isActive={i === activeIndex}
+                boardReady={Math.abs(i - activeIndex) <= 1}
+              />
+            </CardBoundary>
           ))}
         </ScrollView>
       )}

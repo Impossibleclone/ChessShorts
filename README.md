@@ -146,6 +146,7 @@ EXPO_PUBLIC_BOOT_PROBE=true  # boot probe defaults ON when unset; set false for 
 - **Release-build white screens have two distinct causes**, both bypassing the `ErrorBoundary` (so a white window with no dark "⚠ App failed to start" screen is the signature):
   1. A module-eval/route-load throw outside React's render phase — e.g. the `query-string` trap above.
   2. An exception inside a **Reanimated worklet**: worklets execute on the UI thread, where neither React error boundaries nor `ErrorUtils`'s global JS handler can observe them, so the app tears down with zero log. Anything on a scroll/gesture worklet path is a hard-to-debug white-screen risk. The feed therefore stays on core RN `Animated` (native driver) + `ScrollView`'s plain-JS scroll callbacks — `react-native-chessboard` may still use Reanimated internally (that path is proven on-device), but app code should not introduce new worklet surfaces.
+- **Feed safeguards (current build):** only the active card and its neighbors mount a real `Chessboard` (32 animated pieces each — ten at once froze the first drag for seconds); every card is wrapped in a per-card `ErrorBoundary` (`src/feed/CardBoundary.tsx`) so a JS-level render error shows a "swipe for the next one" fallback instead of whiting the whole feed; opponent pieces are inert via the patched `movableColor` prop regardless of engine turn, and the opponent's opening needle move animates visibly after a short prelude instead of being pre-applied silently.
 
 ## License
 

@@ -38,24 +38,27 @@ interface PuzzleCardProps {
   scrollY: Animated.Value;
   cardHeight: number;
   isActive: boolean;
+  /** Only the active card and its immediate neighbors mount a full board. */
+  boardReady: boolean;
 }
 
 /**
- * Isolated board subtree: re-renders only when the position or the
- * orientation changes. Status pills, hint toggles and timers live in the
- * parent and no longer re-render all 32 pieces on every transient update —
- * the main fix for piece-drag lag.
+ * Isolated board subtree: re-renders only when the position, orientation or
+ * interactivity window changes. Status pills, hint toggles and timers live in
+ * the parent and no longer re-render all 32 pieces on every transient update.
  */
 const PuzzleBoard = React.memo(function PuzzleBoard({
   fen,
   boardSize,
   flipBoard,
+  movableColor,
   apiRef,
   onMove,
 }: {
   fen: string;
   boardSize: number;
   flipBoard: boolean;
+  movableColor: 'w' | 'b' | null;
   apiRef: React.MutableRefObject<ChessboardRef | null>;
   onMove: (from: string, to: string, promotion?: string) => boolean;
 }) {
@@ -64,7 +67,7 @@ const PuzzleBoard = React.memo(function PuzzleBoard({
       const result = onMove(info.move.from, info.move.to, info.move.promotion);
       if (result === false) {
         // Wrong/illegal move: snap the board back and clear any stuck
-        // piece selection (the enlarge-and-stick artifact).
+        // piece selection.
         apiRef.current?.resetBoard(fen);
         apiRef.current?.resetAllHighlightedSquares();
       }
@@ -80,6 +83,7 @@ const PuzzleBoard = React.memo(function PuzzleBoard({
       boardSize={boardSize}
       colors={THEME}
       flipBoard={flipBoard}
+      movableColor={movableColor}
       withLetters={true}
       withNumbers={true}
       gestureEnabled={true}
@@ -93,6 +97,7 @@ export const PuzzleCard = React.memo(function PuzzleCard({
   scrollY,
   cardHeight,
   isActive,
+  boardReady,
 }: PuzzleCardProps) {
   const apiRef = useRef<ChessboardRef | null>(null);
   const [hintSeen, setHintSeen] = useState(false);
@@ -103,12 +108,14 @@ export const PuzzleCard = React.memo(function PuzzleCard({
   const {
     currentFen,
     playerColor,
+    phase,
     feedback,
     step,
     solved,
     showSolution,
     replying,
     isPlayerTurn,
+    movableColor,
     expectedMove,
     solutionMoves,
     handleMove,
@@ -207,12 +214,40 @@ export const PuzzleCard = React.memo(function PuzzleCard({
     return (
       <View style={styles.statusContainer}>
         <Text style={styles.statusText}>
-          {replying ? 'Opponent is replying…' : 'Your move'}
+          {phase === 'prelude'
+            ? `${playerColor === 'w' ? 'Black' : 'White'} opens…`
+            : replying
+              ? 'Opponent is replying…'
+              : 'Your move'}
         </Text>
         <Text style={styles.statusSubtext}>
           {puzzle.themes.join(' · ')} · Rating: {puzzle.rating}
         </Text>
       </View>
+    );
+  };
+
+  const renderBoard = () => {
+    if (!boardReady) {
+      // Lightweight placeholder while the card is outside the active window —
+      // keeps mounted chessboards (32 animated pieces each) to about 3.
+      return (
+        <View
+          style={[styles.boardPlaceholder, { width: boardSize, height: boardSize }]}
+        >
+          <Text style={styles.placeholderText}>Preparing board…</Text>
+        </View>
+      );
+    }
+    return (
+      <PuzzleBoard
+        fen={currentFen}
+        boardSize={boardSize}
+        flipBoard={playerColor === 'b'}
+        movableColor={movableColor}
+        apiRef={apiRef}
+        onMove={handleMove}
+      />
     );
   };
 
@@ -249,15 +284,7 @@ export const PuzzleCard = React.memo(function PuzzleCard({
             </Pressable>
           </View>
 
-          <View style={styles.boardWrapper}>
-            <PuzzleBoard
-              fen={currentFen}
-              boardSize={boardSize}
-              flipBoard={playerColor === 'b'}
-              apiRef={apiRef}
-              onMove={handleMove}
-            />
-          </View>
+          <View style={styles.boardWrapper}>{renderBoard()}</View>
 
           {renderStatus()}
 
@@ -393,6 +420,16 @@ const styles = StyleSheet.create({
     elevation: 8,
     marginBottom: 16,
     backgroundColor: '#fff',
+  },
+  boardPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1a1a1e',
+    borderRadius: 10,
+  },
+  placeholderText: {
+    color: '#8f8f96',
+    fontSize: 14,
   },
   statusContainer: {
     alignItems: 'center',

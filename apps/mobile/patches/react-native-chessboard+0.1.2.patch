@@ -167,10 +167,50 @@ diff --git a/node_modules/react-native-chessboard/lib/commonjs/components/chessb
 -//# sourceMappingURL=chessboard-background.js.map
 \ No newline at end of file
 +//# sourceMappingURL=chessboard-background.js.map
+diff --git a/node_modules/react-native-chessboard/lib/commonjs/components/piece/index.js b/node_modules/react-native-chessboard/lib/commonjs/components/piece/index.js
+--- a/node_modules/react-native-chessboard/lib/commonjs/components/piece/index.js
++++ b/node_modules/react-native-chessboard/lib/commonjs/components/piece/index.js
+@@ -52,9 +52,14 @@
+     durations: {
+       move: moveDuration
+     },
+-    gestureEnabled: gestureEnabledFromChessboardProps
++    gestureEnabled: gestureEnabledFromChessboardProps,
++    // Consumer-side patch: when provided ('w' | 'b'), ONLY pieces of that
++    // color are interactive, regardless of the engine's side-to-move. This
++    // keeps the opponent's pieces inert during animated reply windows or
++    // prelude phases.
++    movableColor
+   } = (0, _hooks.useChessboardProps)();
+-  const gestureEnabled = (0, _reactNativeReanimated.useDerivedValue)(() => turn.value === id.charAt(0) && gestureEnabledFromChessboardProps, [id, gestureEnabledFromChessboardProps]);
++  const gestureEnabled = (0, _reactNativeReanimated.useDerivedValue)(() => turn.value === id.charAt(0) && gestureEnabledFromChessboardProps && (movableColor == null || id.charAt(0) === movableColor), [id, gestureEnabledFromChessboardProps, movableColor]);
+   const {
+     toPosition,
+     toTranslation
+@@ -157,7 +162,8 @@
+     }
+ 
+     if (!gestureEnabled.value) return;
+-    scale.value = (0, _reactNativeReanimated.withTiming)(1.2);
++    // Patch: pieces no longer grow when grabbed or tapped.
++    scale.value = 1;
+     onStartTap(square);
+   }, [gestureEnabled.value, globalMoveTo, onStartTap, scale, selectedSquare.value, square, toPosition, translateX.value, translateY.value, validateMove]);
+ 
+@@ -212,7 +218,8 @@
+       height: size * 2,
+       borderRadius: size,
+       zIndex: 0,
+-      backgroundColor: isGestureActive.value ? 'rgba(0, 0, 0, 0.1)' : 'transparent',
++      // Patch: no translucent halo behind grabbed pieces.
++      backgroundColor: 'transparent',
+       transform: [{
+         translateX: translation.x - size / 2
+       }, {
 diff --git a/node_modules/react-native-chessboard/lib/typescript/context/props-context/index.d.ts b/node_modules/react-native-chessboard/lib/typescript/context/props-context/index.d.ts
 --- a/node_modules/react-native-chessboard/lib/typescript/context/props-context/index.d.ts
 +++ b/node_modules/react-native-chessboard/lib/typescript/context/props-context/index.d.ts
-@@ -24,6 +24,11 @@
+@@ -24,6 +24,17 @@
       */
      gestureEnabled?: boolean;
      /**
@@ -178,6 +218,12 @@ diff --git a/node_modules/react-native-chessboard/lib/typescript/context/props-c
 +     * mirrored — black pieces at the bottom). Consumer-side patch addition.
 +     */
 +    flipBoard?: boolean;
++    /**
++     * Restricts interactivity to this color's pieces ('w' | 'b'), regardless
++     * of the engine side-to-move; null/undefined keeps upstream behavior.
++     * Consumer-side patch addition.
++     */
++    movableColor?: string | null;
 +    /**
       * Indicates the initial fen position of the chessboard.
       */

@@ -9,17 +9,25 @@ import * as Haptics from 'expo-haptics';
  * parity test): Moves = [opponent "needle", player, opponent, ...] and the
  * stored FEN is one half-move BEFORE the opponent plays the needle.
  *
- * We auto-play the needle on setup, so:
- * - the player only ever plays their own side (replies animate in after ~0.4s)
+ * The needle is applied AFTER a short prelude so the player actually SEES the
+ * opponent's move happen (e.g. a checking move) instead of being dropped into
+ * a position where their king is already in check with no explanation. After
+ * the prelude:
+ * - the player only ever plays their own color (opponent replies animate in
+ *   ~0.4 s later; opponent pieces stay inert the whole time)
  * - `playerColor` is the color the solver controls — used to orient the board
  * - every puzzle card holds its own state (no global store → no cross-card
  *   re-render storms, the main source of piece-drag lag)
  */
 export type Feedback = 'idle' | 'correct' | 'wrong' | 'solved';
+export type Phase = 'prelude' | 'playing';
+
+export const OPPOSITE_COLOR: Record<'w' | 'b', 'w' | 'b'> = { w: 'b', b: 'w' };
 
 interface PuzzleSetup {
   game: Chess;
-  fen: string;
+  rawFen: string;
+  needle: string | null;
   playerColor: 'w' | 'b';
   solution: string[];
 }
@@ -31,36 +39,70 @@ function toUciMove(uci: string) {
 function initialize(puzzle: Puzzle): PuzzleSetup {
   const game = new Chess(puzzle.fen);
   const moves = puzzle.moves.split(' ').filter(Boolean);
-  if (moves.length) {
-    const needle = moves[0];
-    try {
-      game.move(toUciMove(needle));
-    } catch {
-      // Malformed needle in a corrupt row — surface the raw position.
-    }
-  }
-  return { game, fen: game.fen(), playerColor: game.turn(), solution: moves.slice(1) };
+  const needle = moves.length ? moves[0] : null;
+  // The needle move is always played by the side-to-move in the stored FEN,
+  // so the solver controls the opposite color.
+  const sideToMove = puzzle.fen.split(' ')[1] === 'b' ? 'b' : 'w';
+  const playerColor =
+    needle && moves.length > 1 ? OPPOSITE_COLOR[sideToMove] : sideToMove;
+  return {
+    game,
+    rawFen: game.fen(),
+    needle,
+    playerColor,
+    solution: moves.slice(1),
+  };
 }
 
 export function usePuzzleLogic(puzzle: Puzzle, isActive: boolean) {
   // The card is keyed by puzzle.id upstream, so this initializer runs once
-  // per puzzle; resetPuzzle re-uses it for the explicit reset button.
+  // per puzzle; resetPuzzle re-runs it for the explicit reset button.
   const [initial] = useState(() => initialize(puzzle));
   const gameRef = useRef<Chess>(initial.game);
   const solutionRef = useRef<string[]>(initial.solution);
 
-  const [currentFen, setCurrentFen] = useState(initial.fen);
+  const [currentFen, setCurrentFen] = useState(initial.rawFen);
   const [playerColor] = useState<'w' | 'b'>(initial.playerColor);
+  const [phase, setPhase] = useState<Phase>(
+    initial.needle && initial.solution.length ? 'prelude' : 'playing',
+  );
   const [step, setStep] = useState(0);
   const [feedback, setFeedback] = useState<Feedback>('idle');
   const [solved, setSolved] = useState(initial.solution.length === 0);
   const [showSolution, setShowSolution] = useState(false);
   const [replying, setReplying] = useState(false);
   const startTimeRef = useRef(Date.now());
+  const preludeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const replyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { mutate: submitProgress } = useSubmitProgress();
+
+  const opPlayNeedle = useCallback(() => {
+    const game = gameRef.current;
+    if (!initial.needle) {
+      setPhase('playing');
+      return;
+    }
+    try {
+      game.move(toUciMove(initial.needle));
+    } catch (error) {
+      console.error('Needle application error:', error);
+    }
+    setCurrentFen(game.fen());
+    setPhase('playing');
+  }, [initial.needle]);
+
+  // The opponent visibly opens the puzzle shortly after the card settles —
+  // the player watches the move (check included) rather than inheriting it.
+  useEffect(() => {
+    if (phase !== 'prelude') return;
+    preludeTimerRef.current = setTimeout(opPlayNeedle, 600);
+    return () => {
+      if (preludeTimerRef.current) clearTimeout(preludeTimerRef.current);
+      preludeTimerRef.current = null;
+    };
+  }, [phase, opPlayNeedle]);
 
   useEffect(() => {
     return () => {
@@ -83,6 +125,7 @@ export function usePuzzleLogic(puzzle: Puzzle, isActive: boolean) {
     (from: string, to: string, promotion?: string) => {
       const game = gameRef.current;
       if (!game) return false;
+      if (phase !== 'playing') return false; // opponent is still opening
       if (replyTimerRef.current) return false; // opponent reply is animating
       if (solved || step >= solutionRef.current.length) return false;
 
@@ -146,10 +189,14 @@ export function usePuzzleLogic(puzzle: Puzzle, isActive: boolean) {
 
       return true;
     },
-    [step, solved],
+    [phase, step, solved],
   );
 
   const resetPuzzle = useCallback(() => {
+    if (preludeTimerRef.current) {
+      clearTimeout(preludeTimerRef.current);
+      preludeTimerRef.current = null;
+    }
     if (replyTimerRef.current) {
       clearTimeout(replyTimerRef.current);
       replyTimerRef.current = null;
@@ -161,12 +208,13 @@ export function usePuzzleLogic(puzzle: Puzzle, isActive: boolean) {
     const fresh = initialize(puzzle);
     gameRef.current = fresh.game;
     solutionRef.current = fresh.solution;
-    setCurrentFen(fresh.fen);
+    setCurrentFen(fresh.rawFen);
     setStep(0);
     setFeedback('idle');
     setSolved(fresh.solution.length === 0);
     setShowSolution(false);
     setReplying(false);
+    setPhase(fresh.needle && fresh.solution.length ? 'prelude' : 'playing');
     startTimeRef.current = Date.now();
   }, [puzzle]);
 
@@ -174,15 +222,21 @@ export function usePuzzleLogic(puzzle: Puzzle, isActive: boolean) {
     setShowSolution((current) => !current);
   }, []);
 
+  const interactionOpen = phase === 'playing' && !solved;
+
   return {
     currentFen,
     playerColor,
+    phase,
     feedback,
     step,
     solved,
     showSolution,
     replying,
-    isPlayerTurn: !replying && step % 2 === 0,
+    interactionOpen,
+    /** null = nothing is draggable (prelude / solved); else the solver's color */
+    movableColor: interactionOpen && !replying ? playerColor : null,
+    isPlayerTurn: interactionOpen && !replying && step % 2 === 0,
     expectedMove: solutionRef.current[step] ?? null,
     solutionMoves: solutionRef.current,
     handleMove,
