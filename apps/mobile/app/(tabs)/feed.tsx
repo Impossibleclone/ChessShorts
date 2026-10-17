@@ -1,6 +1,6 @@
 import React from 'react';
-import { FeedScreen as FeedScreenComponent } from '@/feed/FeedScreen';
+import { ShortsFeed as ShortsFeedComponent } from '@/feed/ShortsFeed';
 
 export default function FeedScreen() {
-  return <FeedScreenComponent />;
+  return <ShortsFeedComponent />;
 }
