@@ -143,6 +143,9 @@ EXPO_PUBLIC_BOOT_PROBE=true  # boot probe defaults ON when unset; set false for 
 - **Polars 2.x** cannot read `.csv.zst` natively here — the import script decompresses to a temp file first.
 - **expo-router needs `query-string`** as an explicit dependency under npm (SDK 52 quirk) — and it must be the **v7 CJS shape** (`"query-string": "7.1.3"`, pinned exact). v8/v9 ship a CJS entry with only `{ __esModule, default }`; Metro bundles that shape, expo-router's forked `getPathFromState` calls `queryString.stringify(...)` on it, gets `undefined`, and throws `TypeError: undefined is not a function` mid-render of `BottomTabBar` → React unmounts the tree → plain white window. Don't bump this dependency.
 - These pitfalls were fixed; don't re-add reanimated to `app.json` plugins (Babel plugin alone is correct for this RN/SDK combo).
+- **Release-build white screens have two distinct causes**, both bypassing the `ErrorBoundary` (so a white window with no dark "⚠ App failed to start" screen is the signature):
+  1. A module-eval/route-load throw outside React's render phase — e.g. the `query-string` trap above.
+  2. An exception inside a **Reanimated worklet**: worklets execute on the UI thread, where neither React error boundaries nor `ErrorUtils`'s global JS handler can observe them, so the app tears down with zero log. Anything on a scroll/gesture worklet path is a hard-to-debug white-screen risk. The feed therefore stays on core RN `Animated` (native driver) + `ScrollView`'s plain-JS scroll callbacks — `react-native-chessboard` may still use Reanimated internally (that path is proven on-device), but app code should not introduce new worklet surfaces.
 
 ## License
 
