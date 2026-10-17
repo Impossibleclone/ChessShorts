@@ -1,255 +1,143 @@
 # ChessShorts
 
-A high-performance vertical swipe feed chess puzzle app built with React Native (Expo), Reanimated, and a FastAPI backend with adaptive difficulty.
+A vertical-swipe feed of chess puzzles with **adaptive difficulty**, built with React Native (Expo, New Architecture) on a FastAPI + PostgreSQL backend, sourced from the Lichess puzzle database.
+
+> **Status**: backend is **live** on Render + Neon (500k puzzles loaded); Android test APKs are built via EAS and published as GitHub Releases. White-screen boot bug is under investigation with a boot self-test build (see *Mobile → Boot self-test*).
 
 ## Architecture
 
 ```
 ChessShorts/
 ├── apps/
-│   ├── mobile/          # React Native (Expo SDK 52+) with New Architecture
-│   └── api/             # FastAPI + PostgreSQL + asyncpg
-├── docker-compose.yml   # Local development stack
-└── README.md
+│   ├── mobile/          # React Native — Expo SDK 52, New Architecture
+│   │   ├── app/         # Expo Router screens  ((tabs)/feed, profile)
+│   │   ├── src/         # api client, feed screens, hooks, stores, boot probe
+│   │   └── android/     # prebuilt native project (committed; arm64-v8a release)
+│   └── api/             # FastAPI — async SQLAlchemy 2 + asyncpg
+│       ├── app/         # routes, models, schemas, services (feed algorithm)
+│       └── scripts/     # puzzle import / seed utilities
+├── .github/workflows/ci.yml
+└── docker-compose.yml   # local Postgres for development
 ```
 
-## Tech Stack
+| Piece | Tech |
+|---|---|
+| Feed list UI | `@legendapp/list` (recycleItems, snap-per-screen) |
+| Gestures / animation | `react-native-reanimated` + `react-native-gesture-handler` |
+| Chess board | `react-native-chessboard` 0.1.2 over `@shopify/react-native-skia` |
+| Chess rules | `chess.js` |
+| State | Zustand + MMKV persistence |
+| Data | TanStack Query + axios |
+| API | FastAPI, SQLAlchemy async, asyncpg |
+| Puzzle source | Lichess puzzle database (CSV.zst), 500,000 rows live (popularity ≥ 70 filter) |
 
-### Mobile
-- **Framework**: React Native with Expo SDK 52+ (New Architecture enabled)
-- **Feed**: `@legendapp/list` for high-performance virtualization
-- **Gestures/Animations**: `react-native-reanimated` + `react-native-gesture-handler`
-- **Chess Board**: `react-native-chessboard` (Shopify Skia + Reanimated shared values)
-- **Chess Logic**: `chess.js` for move validation
-- **State**: Zustand + MMKV persistence
-- **Data Fetching**: TanStack Query
+## Live deployment (current)
 
-### Backend
-- **API**: FastAPI with async SQLAlchemy 2.0
-- **Database**: PostgreSQL with asyncpg
-- **Puzzle Source**: Lichess database (CSV.zst)
-- **Adaptive Algorithm**: Rating-band based curation with exclusion of solved puzzles
+- **API**: https://chessshorts.onrender.com — Render web service (Docker, free tier)
+  - `/api/v1/health` → `{"status":"ok","db":"ready","version":"<git-sha-7>"}` (commit SHA is baked at Docker build from `RENDER_GIT_COMMIT`)
+  - Startup is resilient: DB connect retries with backoff, never crash-loops; the app stays up and health reports `db_error` while env is being fixed
+- **Database**: Neon Postgres (`ep-dark-unit-a1ier2qm-pooler`, ap-southeast-1), 500k puzzles ≈ 137 MB
+  - `DATABASE_URL` must be the asyncpg form: `postgresql+asyncpg://user:pass@…-pooler…neon.tech/neondb?sslmode=require` — `sslmode`/`channel_binding` query params are stripped by `app/db/base.py`, which attaches a verified TLS context itself
+  - DB status endpoint contract for the feed is camelCase (`nextOffset`, `userId`, `solveTimeMs` … — set in `app/schemas/__init__.py` via `alias_generator=to_camel`)
+- **Auto-deploy**: Render *Deploys → Settings → Auto-Deploy* must be ON for main; manual **Deploy latest commit** works anytime. API version visible via `/health` `version`.
 
-## Quick Start
+### Local backend
 
-### Prerequisites
-- Node.js 20+
-- Python 3.12+
-- Docker & Docker Compose (for PostgreSQL)
-- Expo CLI: `npm install -g expo-cli eas-cli`
-
-### 1. Start Infrastructure
 ```bash
-docker-compose up -d postgres
+docker compose up -d postgres
+cd apps/api
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+./venv/bin/uvicorn app.main:app --reload --port 8000
 ```
 
-### 2. Backend Setup
+Tables are created automatically at startup (`init_db`). Seed/dev helpers live in `apps/api/scripts/` (`seed_puzzles.py` for 10 quick hand-picked puzzles).
+
+### Bulk import from the Lichess database
+
 ```bash
 cd apps/api
-python -m venv venv
-source venv/bin/activate  # or venv\Scripts\activate on Windows
-pip install -r requirements.txt
-cp .env.example .env
-# Edit .env if needed
-
-# Run migrations (tables created automatically on startup)
-uvicorn app.main:app --reload --port 8000
+./venv/bin/python scripts/import_puzzles.py \
+  --file ~/dls/lichess_db_puzzle.csv.zst \
+  --limit 500000 --min-popularity 70
 ```
 
-### 3. Import Puzzles (Optional - for local data)
-```bash
-# Download and import a subset for development
-python scripts/import_puzzles.py --url https://database.lichess.org/lichess_db_puzzle.csv.zst --limit 100000
-```
+- Streams the `.zst` to a temp CSV (polars does not auto-decompress zstd), quality-filters (`Popularity ≥ N`), dedupes by `PuzzleId`, and bulk-inserts via `asyncpg executemany` on the **direct** Neon endpoint (`-pooler.` stripped) — ~500k rows in ≈ 4 min.
+- Growth beyond ~1.8M rows exceeds Neon free storage (~0.5 GB); check `pg_total_relation_size('puzzles')`.
 
-### 4. Mobile Setup
+## Mobile
+
 ```bash
 cd apps/mobile
-npm install
-# or yarn install
-
-# Start development server
-npx expo start
-
-# For device testing with native modules:
-npx expo run:android
-npx expo run:ios
+npm install --legacy-peer-deps     # peer deps require it
+npx tsc --noEmit                   # typecheck
 ```
 
-## Project Structure
+### Build & ship an APK (no Android Studio needed)
 
-### Mobile (`apps/mobile/`)
-```
-src/
-├── api/           # API client (axios + MMKV)
-├── components/    # Reusable UI components
-├── feed/          # FeedScreen, PuzzleView
-├── hooks/         # usePuzzleFeed, usePuzzleLogic
-├── store/         # Zustand stores (feed, user, puzzle view)
-├── types/         # TypeScript interfaces
-└── utils/         # Helpers
-
-app/
-├── (tabs)/        # Tab navigation screens
-│   ├── feed.tsx
-│   └── profile.tsx
-├── _layout.tsx    # Root layout with providers
-└── index.tsx      # Redirect to feed
+```bash
+npx eas login
+eas build --profile preview --platform android   # release APK, arm64-v8a only
 ```
 
-### API (`apps/api/`)
-```
-app/
-├── api/routes.py      # FastAPI endpoints
-├── db/base.py         # Database connection
-├── models/            # SQLAlchemy models
-├── schemas/           # Pydantic schemas
-├── services/feed.py   # Adaptive feed algorithm
-└── main.py            # FastAPI app entry
+- eas.json env: `EXPO_PUBLIC_API_URL=https://chessshorts.onrender.com` (all profiles), production profile ships an AAB.
+- Release APKs target **arm64-v8a only** via `reactNativeArchitectures` in `android/gradle.properties` (the universal 4-ABI build was 134 MB — Skia `.so` per CPU architecture is the bulk; single-ABI drops it to ~45 MB).
+- CI (`.github/workflows/ci.yml`) runs `tsc --noEmit` + API `compileall` — no secrets required.
 
-scripts/
-└── import_puzzles.py  # Lichess CSV.zst importer
-```
+### Boot self-test (temporary diagnostic gate)
 
-## Key Features
+Because a white-screen-on-start bug has not been reproduced from logs yet, `app/_layout.tsx` guards the real app behind `EXPO_BOOT_PROBE=true` (set in eas.json `preview.env`):
 
-### Adaptive Feed Algorithm
-- Computes user rating from solved puzzle history (rolling average of last 20)
-- Serves 70% puzzles in `rating ± [-120, +80]` band
-- 15% easier (`rating -200 to -120`), 15% harder (`rating +80 to +160`)
-- Excludes already-solved puzzles
-- Penalizes recently-attempted (last 24h)
-- Weights by popularity + small random factor
+- The boot probe renders immediately (only `react`/`react-native` static imports) and `require()`s each risky module **inside try/catch**, painting `✓/✗ name (ms)` per step: env → gesture-handler → mmkv(+instance) → react-query → reanimated → `@legendapp/list` → **skia (paints a live circle)** → chessboard → api client → store.
+- A global `ErrorUtils` handler also displays async/global JS errors on screen.
+- **"▶ Start app"** mounts the real tree afterwards.
+- To restore the normal boot, set `EXPO_BOOT_PROBE=false` (or remove the gate) in `eas.json` and rebuild.
 
-### Puzzle Flow (Lichess Format)
-- FEN = position before first move
-- Moves = space-delimited UCI sequence: `[player_move, opponent_reply, player_move, ...]`
-- Client validates each player move against expected sequence
-- Auto-applies opponent replies after correct moves
-- Tracks multi-move solutions (mate-in-2, etc.)
+### API contract (mobile ↔ backend)
 
-### Performance Optimizations
-- `@legendapp/list` with `recycleItems` + `pagingEnabled` + `snapToInterval`
-- Chessboard runs on UI thread via Skia + Reanimated (zero React re-renders during drag)
-- `chess.js` validation only on JS thread after gesture completes
-- TanStack Query for caching/prefetching
-- MMKV for fast local persistence
+| Method | Endpoint | Notes |
+|---|---|---|
+| GET | `/api/v1/feed?userId=…&offset=0&limit=10` | camelCase query param + `nextOffset` in response |
+| POST | `/api/v1/progress` | body `userId/puzzleId/solved/solveTimeMs` |
+| GET | `/api/v1/progress/{userId}` | history, camelCase incl. `attemptsCount` |
+| GET | `/api/v1/stats/{userId}` | `solvedCount`, `totalAttempts`, `accuracy`, `rating` |
+| GET | `/api/v1/puzzles/{puzzleId}` | single puzzle |
+| GET | `/api/v1/health` | `status`, `db` (`ready`/`error`/`starting`), `version`, `db_error` when failing |
 
-## API Endpoints
+### Adaptive difficulty
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/v1/feed?userId=xxx&offset=0&limit=10` | Get curated puzzle feed |
-| POST | `/api/v1/progress` | Submit solve result |
-| GET | `/api/v1/progress/{userId}` | Get user progress history |
-| GET | `/api/v1/stats/{userId}` | Get user statistics |
-| GET | `/api/v1/puzzles/{puzzleId}` | Get single puzzle |
-| GET | `/api/v1/health` | Health check |
+- User rating = average of the rating of their **last 20 solved** puzzles (subquery window, `app/services/feed.py`).
+- Bands per page: ~70% primary (`rating ±[-120,+80]`), 15% easy (−200..−120), 15% hard (+80..+160); fallback ±400 band when empty.
+- Excludes solved puzzles and everything attempted in the last 24 h; weight-distanced by |rating − user_rating|, popular-first, plus randomness for variety.
 
-## Environment Variables
+### Puzzle line format (Lichess)
 
-### API (`.env`)
+- `FEN` before the player's first move, `Moves` = space-delimited UCI list starting with the player move: `[player, opponent, player, …]`
+- Client validates each player move via chess.js and auto-plays opponent replies; solved when the sequence is complete.
+
+## Environment
+
+### API (`apps/api/.env`, git-ignored)
+
 ```env
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/chessshorts
+DATABASE_URL=postgresql+asyncpg://user:pass@ep-xxx-pooler.region.aws.neon.tech/neondb?sslmode=require
 ENVIRONMENT=development
 ```
 
-### Mobile
-Configure API base URL in `src/api/client.ts`:
-```typescript
-const API_BASE_URL = __DEV__ 
-  ? 'http://localhost:8000' 
-  : 'https://api.yourdomain.com';
+### Mobile (`apps/mobile/eas.json` → build env)
+
+```env
+EXPO_PUBLIC_API_URL=https://chessshorts.onrender.com
+EXPO_BOOT_PROBE=true        # diag builds only; false for clean boot
 ```
 
-## Development Notes
+## Deployment notes / gotchas learned
 
-### New Architecture Requirements
-- Expo SDK 52+ with `"newArchEnabled": true` in app.json
-- Development builds required (not Expo Go) for Skia/Reanimated native modules
-- Use `npx expo run:android/ios` or EAS Dev Client
-
-### Puzzle Data Format
-Lichess CSV columns used:
-- `PuzzleId` → `id`
-- `FEN` → `fen`
-- `Moves` → `moves` (UCI sequence)
-- `Rating` → `rating`
-- `Popularity` → `popularity`
-- `Themes` → `themes` (space-separated → array)
-
-### Testing the Feed
-```bash
-# Test API directly
-curl "http://localhost:8000/api/v1/feed?userId=test_user&offset=0&limit=5"
-```
-
-## Deployment
-
-### Option 1: Free Cloud Deploy (Recommended — No Android Studio needed)
-
-#### Backend → Railway (free $5/mo credit)
-```bash
-# 1. Push to GitHub
-git init && git add . && git commit -m "init"
-gh repo create chess-shorts --push
-
-# 2. Go to railway.app → New Project → Deploy from GitHub → select repo
-# 3. Add PostgreSQL plugin
-# 4. Set env vars: DATABASE_URL (auto), ENVIRONMENT=production
-# 5. Get your URL: https://chessshorts-api.up.railway.app
-```
-
-#### Mobile → EAS Build (30 free builds/mo)
-```bash
-cd apps/mobile
-
-# 1. Configure production API URL in eas.json (already done)
-# 2. Build APK
-npm install -g eas-cli
-eas login
-eas build --profile development --platform android
-# → Wait for "Build succeeded" → gives download URL
-
-# 3. On your phone: open the URL → download .apk → install
-# 4. For live reload:
-npx expo start --dev-client
-# Scan QR with the installed app (not Expo Go)
-```
-
-### Option 2: Local Development (requires Android SDK)
-
-#### Backend
-```bash
-docker-compose up -d postgres
-cd apps/api && source venv/bin/activate
-uvicorn app.main:app --reload --port 8000
-# Seed test puzzles:
-python scripts/seed_puzzles.py
-```
-
-#### Mobile
-```bash
-cd apps/mobile
-# Physical device:
-adb reverse tcp:8000 tcp:8000  # makes localhost work on phone
-npx expo run:android
-
-# Or emulator:
-npx expo run:android
-```
-
-### Option 3: Production Deploy
-
-#### Backend
-- Build Docker image from `apps/api/Dockerfile`
-- Run with managed PostgreSQL (RDS, Cloud SQL, Neon, Supabase)
-- Set `DATABASE_URL` and `ENVIRONMENT=production`
-
-#### Mobile
-- Build with EAS: `eas build --platform all --profile production`
-- Configure production API URL in `eas.json`
-- Submit to App Store / Play Store
+- **Neon**: rotate leaked credentials; serve the app off the `-pooler` endpoint; bulk import off the direct one. `channel_binding=require` in the URL is harmless — the engine strips it.
+- **Render**: set `DATABASE_URL` as one line, no quotes/placeholders; redeploys are slow on free tier (~5–10 min), verify via `/health` `version`.
+- **Polars 2.x** cannot read `.csv.zst` natively here — the import script decompresses to a temp file first.
+- **expo-router needs `query-string`** as an explicit dependency under npm (SDK 52 quirk) — already in package.json.
+- These pitfalls were fixed; don't re-add reanimated to `app.json` plugins (Babel plugin alone is correct for this RN/SDK combo).
 
 ## License
 
