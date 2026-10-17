@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -25,6 +25,8 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 // Board scales with both axes so it stays large on tablets (landscape too)
 // without overflowing short viewports.
 const BOARD_SIZE = Math.min(SCREEN_WIDTH * 0.88, SCREEN_HEIGHT * 0.5, 560);
+// Card keeps side margins on every screen instead of going full-bleed.
+const CARD_WIDTH = Math.min(BOARD_SIZE + 56, SCREEN_WIDTH * 0.94);
 
 interface PuzzleCardProps {
   puzzle: Puzzle;
@@ -42,6 +44,7 @@ export const PuzzleCard = React.memo(function PuzzleCard({
   isActive,
 }: PuzzleCardProps) {
   const boardRef = useRef<ChessboardRef>(null);
+  const [hintSeen, setHintSeen] = useState(false);
   // Entrance animation — same core-Animated pattern as the proven PuzzleView.
   const fadeAnim = useRef(new Animated.Value(isActive ? 1 : 0)).current;
   const slideAnim = useRef(new Animated.Value(isActive ? 0 : 40)).current;
@@ -49,6 +52,7 @@ export const PuzzleCard = React.memo(function PuzzleCard({
   const {
     currentFen,
     feedback,
+    step,
     solved,
     showSolution,
     isPlayerTurn,
@@ -58,6 +62,11 @@ export const PuzzleCard = React.memo(function PuzzleCard({
     toggleSolution,
     resetPuzzle,
   } = usePuzzleLogic(puzzle, isActive);
+
+  // Re-arm the hint every time the puzzle advances so it never lingers.
+  React.useEffect(() => {
+    setHintSeen(false);
+  }, [step, puzzle.id]);
 
   React.useEffect(() => {
     if (isActive) {
@@ -211,19 +220,29 @@ export const PuzzleCard = React.memo(function PuzzleCard({
             </Pressable>
           )}
 
-          {!solved && (
-            <View style={styles.hintContainer}>
-              <Text style={styles.hintText}>
-                {isPlayerTurn
-                  ? `Find the best move${
-                      expectedMove
-                        ? ` (${expectedMove.slice(0, 2)}-${expectedMove.slice(2, 4)})`
-                        : ''
-                    }`
-                  : 'Waiting for opponent...'}
-              </Text>
-            </View>
-          )}
+          {!solved &&
+            (isPlayerTurn ? (
+              <View style={styles.hintRow}>
+                <Text style={styles.hintText}>Find the best move</Text>
+                <Pressable
+                  style={[styles.smallButton, hintSeen && styles.smallButtonActive]}
+                  onPress={() => setHintSeen((seen) => !seen)}
+                >
+                  <Text style={styles.smallButtonText}>
+                    {hintSeen ? 'Hide hint' : '💡 Hint'}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.hintContainer}>
+                <Text style={styles.hintText}>Opponent is replying…</Text>
+              </View>
+            ))}
+          {!solved && hintSeen && expectedMove ? (
+            <Text style={styles.hintRevealText}>
+              💡 Try the piece on {expectedMove.slice(0, 2)}
+            </Text>
+          ) : null}
 
           {solved && (
             <View style={styles.solutionContainer}>
@@ -257,8 +276,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#0a0a0a',
   },
   card: {
-    width: Dimensions.get('window').width,
-    maxWidth: BOARD_SIZE + 56,
+    width: CARD_WIDTH,
     alignItems: 'center',
     backgroundColor: '#131313',
     borderRadius: 20,
@@ -295,6 +313,8 @@ const styles = StyleSheet.create({
   boardWrapper: {
     borderRadius: 12,
     overflow: 'hidden',
+    borderWidth: 3,
+    borderColor: '#2b2b2b',
     shadowColor: '#000',
     shadowOpacity: 0.4,
     shadowRadius: 18,
@@ -345,6 +365,37 @@ const styles = StyleSheet.create({
     color: '#6f6f76',
     fontSize: 14,
     textAlign: 'center',
+  },
+  hintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 6,
+  },
+  hintRevealText: {
+    color: '#d4b45a',
+    fontSize: 13.5,
+    fontWeight: '600',
+    textAlign: 'center',
+    paddingVertical: 4,
+  },
+  smallButton: {
+    backgroundColor: '#1c1c1c',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#2c2c2c',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  smallButtonActive: {
+    borderColor: '#d4b45a',
+  },
+  smallButtonText: {
+    color: '#cfcfcf',
+    fontSize: 12,
+    fontWeight: '600',
   },
   resetButton: {
     marginTop: 10,

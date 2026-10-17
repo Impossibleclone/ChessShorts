@@ -31,6 +31,7 @@ export const ShortsFeed = () => {
     usePuzzleFeed();
 
   const scrollY = useRef(new Animated.Value(0)).current;
+  const scrollRef = useRef<ScrollView | null>(null);
   const loadingMoreRef = useRef(false);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -72,11 +73,11 @@ export const ShortsFeed = () => {
     try {
       await refresh();
       setActiveIndex(0);
-      scrollY.setValue(0);
+      scrollRef.current?.scrollTo({ y: 0, animated: false });
     } finally {
       setRefreshing(false);
     }
-  }, [refresh, scrollY]);
+  }, [refresh]);
 
   const showLoading = isLoading && puzzles.length === 0;
   const showError = !!error && puzzles.length === 0;
@@ -94,12 +95,10 @@ export const ShortsFeed = () => {
           </TouchableOpacity>
         </View>
       ) : showLoading || viewportHeight === 0 ? (
-        <View style={styles.stateContainer}>
-          <ActivityIndicator size="large" color="#4da3ff" />
-          <Text style={styles.stateText}>Loading puzzles…</Text>
-        </View>
+        <LoadingPuzzles />
       ) : (
         <ScrollView
+          ref={scrollRef}
           style={styles.scroll}
           showsVerticalScrollIndicator={false}
           pagingEnabled
@@ -158,6 +157,49 @@ export const ShortsFeed = () => {
   );
 };
 
+/**
+ * Chess-themed loading: a pulsing queen instead of a bare spinner.
+ */
+const LoadingPuzzles = React.memo(function LoadingPuzzles() {
+  const pulse = useRef(new Animated.Value(0)).current;
+  React.useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 850,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 850,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [pulse]);
+  const scale = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.85, 1.15],
+  });
+  const opacity = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.35, 0.95],
+  });
+  return (
+    <View style={styles.stateContainer}>
+      <Animated.Text
+        style={[styles.loadingGlyph, { transform: [{ scale }], opacity }]}
+      >
+        ♛
+      </Animated.Text>
+      <Text style={styles.stateText}>Loading puzzles…</Text>
+    </View>
+  );
+});
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -178,6 +220,11 @@ const styles = StyleSheet.create({
   stateText: {
     color: '#8f8f96',
     fontSize: 16,
+  },
+  loadingGlyph: {
+    color: '#ffffff',
+    fontSize: 46,
+    marginBottom: 4,
   },
   errorText: {
     color: '#ff7f7f',
