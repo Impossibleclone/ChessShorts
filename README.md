@@ -128,8 +128,13 @@ ENVIRONMENT=development
 
 ```env
 EXPO_PUBLIC_API_URL=https://chessshorts.onrender.com
-EXPO_PUBLIC_BOOT_PROBE=true  # diag builds only; must use EXPO_PUBLIC_* prefix for release inlining
+EXPO_PUBLIC_BOOT_PROBE=true  # boot probe defaults ON when unset; set false for a clean boot
 ```
+
+> Env vars are inlined into release bundles by Expo's Babel transform, but **only** when
+> referenced as direct `process.env.EXPO_PUBLIC_X` member expressions. Reading through an
+> alias (`const env = process.env; env.EXPO_PUBLIC_X`) silently yields `undefined` at
+> runtime — this disabled the boot-probe gate in early diagnostic builds.
 
 ## Deployment notes / gotchas learned
 

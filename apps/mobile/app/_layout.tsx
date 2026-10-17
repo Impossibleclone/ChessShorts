@@ -2,12 +2,18 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 /**
- * BOOT SELF-TEST (diagnostic gate: EXPO_BOOT_PROBE=true in eas.json env).
+ * BOOT SELF-TEST (diagnostic gate: EXPO_PUBLIC_BOOT_PROBE, default ON).
  *
  * Every risky library is require()d inside try/catch instead of imported at
  * file top, so an import-time crash cannot white-screen the app: each step
  * paints its result on-screen. After the steps finish, "Start app" mounts the
- * real tree. Flip EXPO_BOOT_PROBE to false once the root cause is fixed.
+ * real tree. Set EXPO_PUBLIC_BOOT_PROBE=false (eas.json) and rebuild to boot
+ * straight into the app — only once the root cause is fixed.
+ *
+ * IMPORTANT: env reads must be direct `process.env.EXPO_PUBLIC_X` member
+ * expressions. Expo's Babel env inlining cannot see accesses through aliases,
+ * so `const env = process.env; env.EXPO_PUBLIC_X` is `undefined` in release
+ * bundles. (This silently disabled the probe gate in two earlier builds.)
  */
 
 type StepResult = {
@@ -41,10 +47,9 @@ if (errorUtils) {
 }
 
 const probeEnv = (): string => {
-  const env = globalThis as unknown as GlobalErrorStash & Record<string, string | undefined>;
-  const envUrl = env.EXPO_PUBLIC_API_URL;
-  const probe = env.EXPO_PUBLIC_BOOT_PROBE;
-  return `API → ${envUrl ?? '(EXPO_PUBLIC_API_URL missing!)'} · probe=${probe ?? 'false'}`;
+  const envUrl = process.env.EXPO_PUBLIC_API_URL;
+  const probe = process.env.EXPO_PUBLIC_BOOT_PROBE;
+  return `API → ${envUrl ?? '(EXPO_PUBLIC_API_URL missing!)'} · probe=${probe ?? 'unset (defaults ON)'}`;
 };
 
 const steps: { name: string; run: () => string | void }[] = [
@@ -126,6 +131,12 @@ const steps: { name: string; run: () => string | void }[] = [
     },
   },
   {
+    name: 'route (tabs)/_layout',
+    run: () => {
+      require('./(tabs)/_layout');
+    },
+  },
+  {
     name: 'route index',
     run: () => {
       require('./index');
@@ -134,9 +145,10 @@ const steps: { name: string; run: () => string | void }[] = [
 ];
 
 export default function RootLayout() {
-  const env = process.env as Record<string, string | undefined>;
-  const probe = env.EXPO_PUBLIC_BOOT_PROBE === 'true';
-  return probe ? <BootProbe /> : <RealApp />;
+  // Default ON: the probe MUST run during this diagnosis phase. Only an
+  // explicit build-time "false" boots straight into the app.
+  const probeEnabled = process.env.EXPO_PUBLIC_BOOT_PROBE !== 'false';
+  return probeEnabled ? <BootProbe /> : <RealApp />;
 }
 
 function BootProbe() {
