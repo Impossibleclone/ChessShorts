@@ -24,7 +24,7 @@ export function usePuzzleFeed() {
     error,
   } = useFeedStore();
 
-  const { data: feedData, isLoading: isInitialLoading, refetch } = useQuery<FeedResponse, Error>({
+  const { data: feedData, isLoading: isInitialLoading } = useQuery<FeedResponse, Error>({
     queryKey: [FEED_QUERY_KEY, offset, limit],
     queryFn: () => api.getFeed(offset, limit),
     enabled: offset === 0,
@@ -48,7 +48,9 @@ export function usePuzzleFeed() {
     if (isLoadingMore) return;
     setLoadingMore(true);
     try {
-      const next = await api.getFeed(offset + limit, limit);
+      // `offset` is the cursor for the NEXT page (API returns nextOffset),
+      // so fetch at `offset` directly — offset + limit would skip a page.
+      const next = await api.getFeed(offset, limit);
       appendPuzzles(next.puzzles);
       setOffset(next.nextOffset);
     } catch (err) {
@@ -59,10 +61,21 @@ export function usePuzzleFeed() {
   }, [offset, limit, isLoadingMore, appendPuzzles, setOffset, setLoadingMore, setError]);
 
   const refresh = useCallback(async () => {
+    // Fetch a fresh first page directly: going through refetch() here would
+    // hit the disabled (offset > 0) query cache entry and append duplicates
+    // instead of replacing the feed.
     setLoading(true);
     setError(null);
-    await refetch();
-  }, [refetch, setLoading, setError]);
+    try {
+      const fresh = await api.getFeed(0, limit);
+      setPuzzles(fresh.puzzles);
+      setOffset(fresh.nextOffset);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to refresh puzzles');
+    } finally {
+      setLoading(false);
+    }
+  }, [limit, setPuzzles, setOffset, setLoading, setError]);
 
   const goToIndex = useCallback((index: number) => {
     setCurrentIndex(index);

@@ -3,129 +3,157 @@ import {
   View,
   Text,
   StyleSheet,
-  Dimensions,
+  Animated,
   RefreshControl,
   ActivityIndicator,
   TouchableOpacity,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  ScrollView,
 } from 'react-native';
-import Animated, {
-  useDerivedValue,
-  useSharedValue,
-  useAnimatedScrollHandler,
-  runOnJS,
-} from 'react-native-reanimated';
-import { Puzzle } from '@/types';
 import { usePuzzleFeed } from '@/hooks/usePuzzleFeed';
 import { PuzzleCard } from './PuzzleCard';
 
-const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
-const CARD_HEIGHT = Math.min(SCREEN_HEIGHT, 1100);
-
+/**
+ * Shorts-style vertical puzzle feed.
+ *
+ * Built ONLY on core React Native primitives (ScrollView + Animated with the
+ * native driver) — the same stack proven in the PuzzleView build. Reanimated
+ * worklets on the scroll path are deliberately avoided: a worklet exception
+ * runs on the UI thread where neither React error boundaries nor the global
+ * JS error handler can catch it (it white-screens release builds).
+ *
+ * Each card is exactly the measured viewport height, so `pagingEnabled`
+ * snaps precisely card-to-card (YouTube Shorts behaviour) on any screen.
+ */
 export const ShortsFeed = () => {
-  const {
-    puzzles,
-    isLoading,
-    isLoadingMore,
-    error,
-    refresh,
-    loadMore,
-  } = usePuzzleFeed();
+  const { puzzles, isLoading, isLoadingMore, error, refresh, loadMore } =
+    usePuzzleFeed();
 
-  const scrollY = useSharedValue(0);
-  const scrollViewRef = useRef<Animated.ScrollView | null>(null);
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const loadingMoreRef = useRef(false);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [activeIndex, setActiveIndex] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Which card is centered → drives which puzzle is "active".
-  const activeIndex = useDerivedValue(() => Math.round(scrollY.value / CARD_HEIGHT));
+  // Native-driven scroll position for the card scale/dim animations.
+  const handleScrollEvent = Animated.event(
+    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+    { useNativeDriver: true },
+  );
 
-  const scrollHandler = useAnimatedScrollHandler({
-    onScroll: (event) => {
-      scrollY.value = event.contentOffset.y;
-      // Auto-load more when nearing the bottom (guard inside loadMore).
-      if (
-        event.contentOffset.y + event.layoutMeasurement.height >=
-        event.contentSize.height - 120
-      ) {
-        runOnJS(loadMore)();
+  // Fires when a drag or momentum gesture settles (plain JS thread).
+  const handleSettled = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
+      const page = layoutMeasurement.height;
+      if (page > 0) {
+        setActiveIndex(Math.max(0, Math.round(contentOffset.y / page)));
+        // Near the end of the loaded content → fetch the next page.
+        if (
+          contentOffset.y + layoutMeasurement.height >=
+            contentSize.height - page * 1.5 &&
+          !loadingMoreRef.current
+        ) {
+          loadingMoreRef.current = true;
+          loadMore()
+            .catch(() => {})
+            .finally(() => {
+              loadingMoreRef.current = false;
+            });
+        }
       }
     },
-  });
+    [loadMore],
+  );
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await refresh();
+      setActiveIndex(0);
+      scrollY.setValue(0);
     } finally {
       setRefreshing(false);
     }
-  }, [refresh]);
+  }, [refresh, scrollY]);
 
-  if (isLoading && puzzles.length === 0) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#3b82f6" />
-        <Text style={styles.loadingText}>Loading puzzles…</Text>
-      </View>
-    );
-  }
-
-  if (error && puzzles.length === 0) {
-    return (
-      <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={handleRefresh}>
-          <Text style={styles.retryText}>Pull to retry</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  const showLoading = isLoading && puzzles.length === 0;
+  const showError = !!error && puzzles.length === 0;
 
   return (
-    <View style={styles.container}>
-      <Animated.ScrollView
-        ref={scrollViewRef}
-        showsVerticalScrollIndicator={false}
-        pagingEnabled
-        snapToInterval={CARD_HEIGHT}
-        decelerationRate="fast"
-        scrollEventThrottle={16}
-        onScroll={scrollHandler}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            colors={['#3b82f6']}
-            progressBackgroundColor="#131313"
-          />
-        }
-        contentContainerStyle={styles.content}
-      >
-        {puzzles.map((puzzle, i) => {
-          const isActive = activeIndex.value === i;
-          return (
+    <View
+      style={styles.container}
+      onLayout={(e) => setViewportHeight(e.nativeEvent.layout.height)}
+    >
+      {showError ? (
+        <View style={styles.stateContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={handleRefresh}>
+            <Text style={styles.retryText}>Tap to retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : showLoading || viewportHeight === 0 ? (
+        <View style={styles.stateContainer}>
+          <ActivityIndicator size="large" color="#4da3ff" />
+          <Text style={styles.stateText}>Loading puzzles…</Text>
+        </View>
+      ) : (
+        <ScrollView
+          style={styles.scroll}
+          showsVerticalScrollIndicator={false}
+          pagingEnabled
+          decelerationRate="fast"
+          scrollEventThrottle={16}
+          onScroll={handleScrollEvent}
+          onScrollEndDrag={handleSettled}
+          onMomentumScrollEnd={handleSettled}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              colors={['#4da3ff']}
+              tintColor="#4da3ff"
+              progressBackgroundColor="#131313"
+            />
+          }
+        >
+          {puzzles.map((puzzle, i) => (
             <PuzzleCard
               key={puzzle.id}
               puzzle={puzzle}
               index={i}
               scrollY={scrollY}
-              cardHeight={CARD_HEIGHT}
-              isActive={isActive}
+              cardHeight={viewportHeight}
+              isActive={i === activeIndex}
             />
-          );
-        })}
-        {isLoadingMore && puzzles.length > 0 && (
-          <View style={styles.loadMoreRow}>
-            <ActivityIndicator size="small" color="#3b82f6" />
-            <Text style={styles.loadMoreText}>Loading more…</Text>
-          </View>
-        )}
-      </Animated.ScrollView>
-
-      {puzzles.length > 0 && !isLoadingMore && (
-        <View style={styles.swipeHint}>
-          <Text style={styles.swipeHintText}>Swipe up for next puzzle ↓</Text>
-        </View>
+          ))}
+        </ScrollView>
       )}
+
+      {/* Top overlay: brand + position in the feed */}
+      <View style={styles.topBar} pointerEvents="none">
+        <Text style={styles.brand}>♛ ChessShorts</Text>
+        {puzzles.length > 0 ? (
+          <Text style={styles.counter}>
+            #{activeIndex + 1} · {puzzles.length} loaded
+          </Text>
+        ) : null}
+      </View>
+
+      {/* Bottom hint: only on the first card, like Shorts' swipe cue */}
+      {activeIndex === 0 && puzzles.length > 1 ? (
+        <View style={styles.swipeHint} pointerEvents="none">
+          <Text style={styles.swipeHintText}>Swipe up for the next puzzle ↑</Text>
+        </View>
+      ) : null}
+
+      {isLoadingMore ? (
+        <View style={styles.loadingMore} pointerEvents="none">
+          <ActivityIndicator size="small" color="#4da3ff" />
+          <Text style={styles.loadingMoreText}>Loading more…</Text>
+        </View>
+      ) : null}
     </View>
   );
 };
@@ -135,67 +163,90 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0a0a0a',
   },
-  content: {
-    paddingBottom: 80,
-    alignItems: 'center',
-  },
-  loadingContainer: {
+  scroll: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
     backgroundColor: '#0a0a0a',
-    gap: 16,
   },
-  loadingText: {
-    color: '#8a8a8e',
-    fontSize: 16,
-  },
-  errorContainer: {
+  stateContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#0a0a0a',
     padding: 24,
-    gap: 12,
+    gap: 14,
+  },
+  stateText: {
+    color: '#8f8f96',
+    fontSize: 16,
   },
   errorText: {
-    color: '#f87171',
-    fontSize: 16,
+    color: '#ff7f7f',
+    fontSize: 15,
     textAlign: 'center',
   },
   retryButton: {
     backgroundColor: '#1a1a1a',
     borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
+    borderColor: '#2c2c2c',
   },
   retryText: {
-    color: '#3b82f6',
+    color: '#4da3ff',
     fontSize: 14,
     fontWeight: '600',
   },
-  loadMoreRow: {
-    padding: 24,
-    alignItems: 'center',
+  topBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     flexDirection: 'row',
-    gap: 10,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingTop: 12,
   },
-  loadMoreText: {
-    color: '#8a8a8e',
-    fontSize: 14,
+  brand: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '800',
+    opacity: 0.92,
+  },
+  counter: {
+    color: '#8f8f96',
+    fontSize: 13,
+    fontWeight: '600',
   },
   swipeHint: {
     position: 'absolute',
-    bottom: 34,
+    bottom: 18,
     left: 0,
     right: 0,
     alignItems: 'center',
   },
   swipeHintText: {
-    color: '#52525b',
+    color: '#56565e',
     fontSize: 13,
     fontWeight: '500',
+  },
+  loadingMore: {
+    position: 'absolute',
+    bottom: 18,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(19, 19, 19, 0.9)',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#232323',
+  },
+  loadingMoreText: {
+    color: '#8f8f96',
+    fontSize: 13,
   },
 });

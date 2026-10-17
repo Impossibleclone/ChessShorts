@@ -1,47 +1,38 @@
-import React, { useCallback, useMemo, useRef } from 'react';
+import React, { useCallback, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Dimensions,
-  TouchableOpacity,
+  Animated,
+  Easing,
   Pressable,
 } from 'react-native';
-import Animated, {
-  interpolate,
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-} from 'react-native-reanimated';
 import Chessboard, { ChessboardRef } from 'react-native-chessboard';
-import { Chess } from 'chess.js';
 import { usePuzzleLogic } from '@/hooks/usePuzzleLogic';
 import { Puzzle } from '@/types';
 import type { Move } from 'chess.js';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-// Responsive board: scales with screen, capped so it never dominates.
-const BOARD_SIZE = Math.min(SCREEN_WIDTH * 0.82, 560);
-
+// Local type definition since ChessMoveInfo is not exported
 type ChessMoveInfo = {
   move: Move;
-  state: { in_promotion: boolean };
+  state: {
+    in_promotion: boolean;
+  };
 };
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+// Board scales with both axes so it stays large on tablets (landscape too)
+// without overflowing short viewports.
+const BOARD_SIZE = Math.min(SCREEN_WIDTH * 0.88, SCREEN_HEIGHT * 0.5, 560);
 
 interface PuzzleCardProps {
   puzzle: Puzzle;
   index: number;
-  scrollY: Animated.SharedValue<number>;
+  scrollY: Animated.Value;
   cardHeight: number;
   isActive: boolean;
 }
-
-const theme = {
-  white: '#e8e2c5',
-  black: '#5d6b41',
-  lastMoveHighlight: '#aecfa6',
-  checkmateHighlight: '#ff6b6b',
-};
 
 export const PuzzleCard = React.memo(function PuzzleCard({
   puzzle,
@@ -51,15 +42,13 @@ export const PuzzleCard = React.memo(function PuzzleCard({
   isActive,
 }: PuzzleCardProps) {
   const boardRef = useRef<ChessboardRef>(null);
-
-  // Entrance animation for the card content when it becomes active.
-  const enterY = useSharedValue(isActive ? 0 : 30);
-  const enterOpacity = useSharedValue(isActive ? 1 : 0);
+  // Entrance animation — same core-Animated pattern as the proven PuzzleView.
+  const fadeAnim = useRef(new Animated.Value(isActive ? 1 : 0)).current;
+  const slideAnim = useRef(new Animated.Value(isActive ? 0 : 40)).current;
 
   const {
     currentFen,
     feedback,
-    step,
     solved,
     showSolution,
     isPlayerTurn,
@@ -70,55 +59,71 @@ export const PuzzleCard = React.memo(function PuzzleCard({
     resetPuzzle,
   } = usePuzzleLogic(puzzle, isActive);
 
-  // Animate content in when the card becomes the active (centered) one.
   React.useEffect(() => {
     if (isActive) {
-      enterY.value = withSpring(0, { damping: 20, stiffness: 150 });
-      enterOpacity.value = withSpring(1, { damping: 20, stiffness: 150 });
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 280,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 340,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
     } else {
-      enterY.value = 30;
-      enterOpacity.value = 0;
+      fadeAnim.setValue(0);
+      slideAnim.setValue(40);
     }
-  }, [isActive]);
+  }, [isActive, fadeAnim, slideAnim]);
 
-  // Card position relative to the scroll center → scale/opacity for Shorts effect.
-  const cardStyle = useAnimatedStyle(() => {
-    const progress = scrollY.value / cardHeight;
-    const diff = progress - index;
-    const scale = interpolate(diff, [-1.2, -0.5, 0, 0.5, 1.2], [
-      0.86,
-      0.96,
-      1,
-      0.96,
-      0.86,
-    ]);
-    const opacity = interpolate(diff, [-1.2, -0.5, 0, 0.5, 1.2], [
-      0.35,
-      0.75,
-      1,
-      0.75,
-      0.35,
-    ]);
-    const translateY = interpolate(diff, [-1, 0, 1], [24, 0, -24]);
-    return {
-      transform: [{ scale }, { translateY }],
-      opacity,
-    };
+  // Shorts-style focus: the centered card is full-size/bright, neighbours
+  // scale down and dim while scrolling. Driven natively off the scroll value.
+  const inputRange = [
+    (index - 1) * cardHeight,
+    index * cardHeight,
+    (index + 1) * cardHeight,
+  ];
+  const scale = scrollY.interpolate({
+    inputRange,
+    outputRange: [0.92, 1, 0.92],
+    extrapolate: 'clamp',
+  });
+  const dimOpacity = scrollY.interpolate({
+    inputRange,
+    outputRange: [0.45, 1, 0.45],
+    extrapolate: 'clamp',
   });
 
-  const contentStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: enterY.value }],
-    opacity: enterOpacity.value,
-  }));
-
-  const handleMoveWrapper = (info: ChessMoveInfo) => {
-    const result = handleMove(info.move.from, info.move.to, info.move.promotion);
-    if (result === false) {
-      // Wrong / illegal move: snap board back and clear any stuck selection.
-      boardRef.current?.resetBoard(currentFen);
-      boardRef.current?.resetAllHighlightedSquares();
-    }
+  const theme = {
+    white: '#e8e2c5',
+    black: '#5d6b41',
+    lastMoveHighlight: '#aecfa6',
+    checkmateHighlight: '#ff6b6b',
+    promotionPieceButton: '#ffe066',
   };
+
+  const handleMoveWrapper = useCallback(
+    (info: ChessMoveInfo) => {
+      const result = handleMove(info.move.from, info.move.to, info.move.promotion);
+      if (result === false) {
+        // Wrong / illegal move: snap the board back to the current position
+        // and clear any stuck piece highlight (selection transform).
+        boardRef.current?.resetBoard(currentFen);
+        boardRef.current?.resetAllHighlightedSquares();
+      }
+    },
+    [handleMove, currentFen],
+  );
+
+  const resetPuzzleWithBoard = useCallback(() => {
+    resetPuzzle();
+    boardRef.current?.resetBoard(puzzle.fen);
+    boardRef.current?.resetAllHighlightedSquares();
+  }, [resetPuzzle, puzzle.fen]);
 
   const renderStatus = () => {
     if (solved) {
@@ -152,36 +157,40 @@ export const PuzzleCard = React.memo(function PuzzleCard({
     return (
       <View style={styles.statusContainer}>
         <Text style={styles.statusText}>
-          {isPlayerTurn ? 'Your move' : 'Opponent thinking…'}
+          {isPlayerTurn ? 'Your move' : 'Opponent thinking...'}
         </Text>
         <Text style={styles.statusSubtext}>
-          {puzzle.themes.join(' · ')} • Rating: {puzzle.rating}
+          {puzzle.themes.join(' · ')} · Rating: {puzzle.rating}
         </Text>
       </View>
     );
   };
 
   return (
-    <Animated.View style={[styles.wrapper, cardStyle]}>
-      <View style={styles.pillar} />
-      <Animated.View style={[styles.card, contentStyle]}>
-        <View style={styles.header}>
+    <View style={[styles.page, { height: cardHeight }]} collapsable={false}>
+      <Animated.View style={{ transform: [{ scale }], opacity: dimOpacity }}>
+        <Animated.View
+          style={[
+            styles.card,
+            {
+              opacity: fadeAnim,
+              transform: [{ translateY: slideAnim }],
+            },
+          ]}
+        >
           <View style={styles.badgeRow}>
             <Pressable style={styles.badge} onPress={resetPuzzleWithBoard}>
               <Text style={styles.badgeText}>↺ Reset</Text>
             </Pressable>
-            <View style={styles.badge} />
-            <Pressable style={styles.badge}>
+            <View style={styles.badge}>
               <Text style={styles.badgeText}>#{index + 1}</Text>
-            </Pressable>
-            <Pressable style={styles.badge}>
+            </View>
+            <View style={styles.badge}>
               <Text style={styles.badgeText}>{puzzle.rating}</Text>
-            </Pressable>
+            </View>
           </View>
-        </View>
 
-        <View style={styles.boardWrapper}>
-          <View style={styles.boardCenter}>
+          <View style={styles.boardWrapper}>
             <Chessboard
               ref={boardRef}
               fen={currentFen}
@@ -193,134 +202,111 @@ export const PuzzleCard = React.memo(function PuzzleCard({
               gestureEnabled={true}
             />
           </View>
-        </View>
 
-        {renderStatus()}
+          {renderStatus()}
 
-        {feedback === 'wrong' && (
-          <View style={styles.resetContainer}>
+          {feedback === 'wrong' && (
             <Pressable style={styles.resetButton} onPress={resetPuzzleWithBoard}>
-              <Text style={styles.resetText}>↺ Reset puzzle</Text>
+              <Text style={styles.resetButtonText}>↺ Reset puzzle</Text>
             </Pressable>
-          </View>
-        )}
+          )}
 
-        {!solved && (
-          <View style={styles.hintContainer}>
-            <Text style={styles.hintText}>
-              {isPlayerTurn
-                ? `Find the best move${
-                    expectedMove
-                      ? ` (${expectedMove.slice(0, 2)}-${expectedMove.slice(
-                          2,
-                          4,
-                        )})`
-                      : ''
-                  }`
-                : 'Waiting for opponent…'}
-            </Text>
-          </View>
-        )}
-
-        {solved && (
-          <View style={styles.solutionContainer}>
-            <Text style={styles.solutionTitle}>Solution:</Text>
-            <Text style={styles.solutionMoves}>
-              {solutionMoves.map((move, i) => (
-                <React.Fragment key={i}>
-                  {i % 2 === 0 ? `${Math.floor(i / 2) + 1}. ` : ''}
-                  {move} {'\u00A0'}
-                </React.Fragment>
-              ))}
-            </Text>
-            <Pressable style={styles.showSolutionButton} onPress={toggleSolution}>
-              <Text style={styles.showSolutionText}>
-                {showSolution ? 'Hide Solution' : 'Show Full Line'}
+          {!solved && (
+            <View style={styles.hintContainer}>
+              <Text style={styles.hintText}>
+                {isPlayerTurn
+                  ? `Find the best move${
+                      expectedMove
+                        ? ` (${expectedMove.slice(0, 2)}-${expectedMove.slice(2, 4)})`
+                        : ''
+                    }`
+                  : 'Waiting for opponent...'}
               </Text>
-            </Pressable>
-          </View>
-        )}
-      </Animated.View>
-      <View style={styles.pillar} />
-    </Animated.View>
-  );
+            </View>
+          )}
 
-  function resetPuzzleWithBoard() {
-    resetPuzzle();
-    boardRef.current?.resetBoard(puzzle.fen);
-    boardRef.current?.resetAllHighlightedSquares();
-  }
+          {solved && (
+            <View style={styles.solutionContainer}>
+              <Text style={styles.solutionTitle}>Solution:</Text>
+              <Text style={styles.solutionMoves}>
+                {solutionMoves.map((move, i) => (
+                  <React.Fragment key={i}>
+                    {i % 2 === 0 ? `${Math.floor(i / 2) + 1}. ` : ''}
+                    {move} {'\u00A0'}
+                  </React.Fragment>
+                ))}
+              </Text>
+              <Pressable onPress={toggleSolution} style={styles.showSolutionButton}>
+                <Text style={styles.showSolutionText}>
+                  {showSolution ? 'Hide Solution' : 'Show Full Line'}
+                </Text>
+              </Pressable>
+            </View>
+          )}
+        </Animated.View>
+      </Animated.View>
+    </View>
+  );
 });
 
 const styles = StyleSheet.create({
-  wrapper: {
-    flex: 1,
+  page: {
+    width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  pillar: {
-    flex: 1,
     backgroundColor: '#0a0a0a',
   },
   card: {
-    width: '100%',
-    maxWidth: BOARD_SIZE + 60,
+    width: Dimensions.get('window').width,
+    maxWidth: BOARD_SIZE + 56,
     alignItems: 'center',
     backgroundColor: '#131313',
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#222',
+    borderColor: '#232323',
     paddingHorizontal: 20,
-    paddingVertical: 26,
+    paddingVertical: 22,
     shadowColor: '#000',
-    shadowOpacity: 0.6,
-    shadowRadius: 30,
-    shadowOffset: { width: 0, height: 16 },
-    elevation: 16,
-  },
-  boardWrapper: {
-    width: BOARD_SIZE,
-    height: BOARD_SIZE,
-    borderRadius: 16,
-    overflow: 'hidden',
-    backgroundColor: '#000',
-    marginBottom: 18,
-  },
-  boardCenter: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  header: {
-    width: '100%',
-    alignItems: 'center',
-    marginBottom: 10,
+    shadowOpacity: 0.55,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 14,
   },
   badgeRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 6,
+    marginBottom: 14,
   },
   badge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
     backgroundColor: '#1a1a1a',
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     paddingVertical: 6,
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
+    borderColor: '#2c2c2c',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   badgeText: {
-    color: '#fff',
+    color: '#e5e5e5',
     fontSize: 13,
     fontWeight: '600',
+  },
+  boardWrapper: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 9 },
+    elevation: 8,
+    marginBottom: 18,
+    backgroundColor: '#fff',
   },
   statusContainer: {
     alignItems: 'center',
     marginBottom: 14,
-    minHeight: 52,
+    minHeight: 50,
     justifyContent: 'center',
   },
   statusText: {
@@ -329,26 +315,26 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   statusSubtext: {
-    color: '#a1a1aa',
+    color: '#8f8f96',
     fontSize: 13,
     marginTop: 4,
     textAlign: 'center',
   },
   statusCorrect: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    borderRadius: 14,
+    backgroundColor: 'rgba(46, 204, 113, 0.15)',
+    borderRadius: 12,
     paddingHorizontal: 24,
-    paddingVertical: 10,
+    paddingVertical: 8,
   },
   statusWrong: {
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
-    borderRadius: 14,
+    backgroundColor: 'rgba(231, 76, 60, 0.15)',
+    borderRadius: 12,
     paddingHorizontal: 24,
-    paddingVertical: 10,
+    paddingVertical: 8,
   },
   statusSolved: {
-    backgroundColor: 'rgba(16, 185, 129, 0.18)',
-    borderRadius: 14,
+    backgroundColor: 'rgba(46, 204, 113, 0.2)',
+    borderRadius: 12,
     paddingHorizontal: 24,
     paddingVertical: 12,
   },
@@ -356,58 +342,53 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   hintText: {
-    color: '#8a8a8e',
+    color: '#6f6f76',
     fontSize: 14,
     textAlign: 'center',
   },
-  resetContainer: {
-    marginTop: 12,
-  },
   resetButton: {
+    marginTop: 10,
     backgroundColor: '#1a1a1a',
-    borderRadius: 12,
+    borderRadius: 10,
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
-    alignItems: 'center',
+    borderColor: '#2c2c2c',
   },
-  resetText: {
-    color: '#3b82f6',
+  resetButtonText: {
+    color: '#4da3ff',
     fontSize: 13,
     fontWeight: '600',
   },
   solutionContainer: {
     width: '100%',
     backgroundColor: '#101010',
-    borderRadius: 14,
+    borderRadius: 12,
     padding: 16,
-    marginTop: 10,
+    marginTop: 8,
     borderWidth: 1,
-    borderColor: '#222',
+    borderColor: '#232323',
   },
   solutionTitle: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '600',
     marginBottom: 8,
   },
   solutionMoves: {
-    color: '#cbd5e1',
+    color: '#b9b9c2',
     fontSize: 14,
     fontFamily: 'monospace',
     lineHeight: 22,
     marginBottom: 12,
-    textAlign: 'center',
   },
   showSolutionButton: {
-    alignSelf: 'center',
-    marginTop: 4,
+    alignItems: 'center',
   },
   showSolutionText: {
-    color: '#3b82f6',
+    color: '#4da3ff',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
   },
 });
 
