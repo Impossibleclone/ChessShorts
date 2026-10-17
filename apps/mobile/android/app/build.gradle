@@ -93,6 +93,12 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0.0"
+        ndk {
+            // Single-ABI release keeps the APK small; override with
+            // -PreactNativeArchitectures=arm64-v8a,armeabi-v7a,... when needed
+            // (e.g. for emulator coverage) via gradleCommand in eas.json
+            abiFilters ((findProperty('reactNativeArchitectures') ?: "arm64-v8a").split(','))
+        }
     }
     signingConfigs {
         debug {
