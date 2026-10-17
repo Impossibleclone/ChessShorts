@@ -107,6 +107,13 @@ export function usePuzzleLogic(puzzle: Puzzle, isActive: boolean) {
     [step, solved, setFeedback, setStep, setSolved, setCurrentFen, submitProgress]
   );
 
+  const resetPuzzle = useCallback(() => {
+    gameRef.current = new Chess(puzzle.fen);
+    solutionRef.current = puzzle.moves.split(' ').filter(Boolean);
+    setCurrentFen(puzzle.fen);
+    reset();
+  }, [puzzle.fen, puzzle.moves, setCurrentFen, reset]);
+
   const toggleSolution = useCallback(() => {
     setShowSolution(!showSolution);
   }, [setShowSolution, showSolution]);
@@ -131,5 +138,6 @@ export function usePuzzleLogic(puzzle: Puzzle, isActive: boolean) {
     solutionMoves: getSolutionMoves(),
     handleMove,
     toggleSolution,
+    resetPuzzle,
   };
 }

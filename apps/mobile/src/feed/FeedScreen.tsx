@@ -7,7 +7,7 @@ import { useFeedStore } from '@/store';
 import { Puzzle } from '@/types';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
-const ITEM_HEIGHT = SCREEN_HEIGHT;
+const ITEM_HEIGHT = Math.min(SCREEN_HEIGHT, 1100);
 
 export const FeedScreen = () => {
   const {
@@ -45,9 +45,9 @@ export const FeedScreen = () => {
   }, [refresh]);
 
   const renderItem = useCallback(({ item, index }: { item: Puzzle; index: number }) => (
-    <View 
-      key={item.id} 
-      style={{ height: ITEM_HEIGHT, width: SCREEN_WIDTH }}
+    <View
+      key={item.id}
+      style={{ height: ITEM_HEIGHT, width: SCREEN_WIDTH, alignItems: 'center' }}
       collapsable={false}
     >
       <PuzzleView puzzle={item} isActive={index === visibleIndex} index={index} />
@@ -89,8 +89,8 @@ export const FeedScreen = () => {
         }
         onEndReached={loadMore}
         onEndReachedThreshold={0.5}
-        contentContainerStyle={styles.listContent}
-        recycleItems={true}
+        contentContainerStyle={{ ...styles.listContent, alignItems: 'center' }}
+        recycleItems={false}
       />
       
       {isLoadingMore && puzzles.length > 0 && (

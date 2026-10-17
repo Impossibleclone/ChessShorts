@@ -24,8 +24,6 @@ export function usePuzzleFeed() {
     error,
   } = useFeedStore();
 
-  const queryClient = useQueryClient();
-
   const { data: feedData, isLoading: isInitialLoading, refetch } = useQuery<FeedResponse, Error>({
     queryKey: [FEED_QUERY_KEY, offset, limit],
     queryFn: () => api.getFeed(offset, limit),
@@ -50,15 +48,15 @@ export function usePuzzleFeed() {
     if (isLoadingMore) return;
     setLoadingMore(true);
     try {
-      await queryClient.prefetchQuery({
-        queryKey: [FEED_QUERY_KEY, offset + limit, limit],
-        queryFn: () => api.getFeed(offset + limit, limit),
-      });
+      const next = await api.getFeed(offset + limit, limit);
+      appendPuzzles(next.puzzles);
+      setOffset(next.nextOffset);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load more puzzles');
+    } finally {
       setLoadingMore(false);
     }
-  }, [offset, limit, isLoadingMore, queryClient, setLoadingMore, setError]);
+  }, [offset, limit, isLoadingMore, appendPuzzles, setOffset, setLoadingMore, setError]);
 
   const refresh = useCallback(async () => {
     setLoading(true);

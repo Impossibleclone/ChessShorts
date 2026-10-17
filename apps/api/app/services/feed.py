@@ -96,10 +96,9 @@ async def fetch_puzzles_by_band(
         .where(rating_filter)
         .where(not_(Puzzle.id.in_(all_excluded)) if all_excluded else True)
         .order_by(
-            # Weight by: rating distance (closer = better), popularity (higher = better), random
+            # Weight by: rating distance (closer = better), popularity (higher = better)
             func.abs(Puzzle.rating - user_rating).asc(),
-            Puzzle.popularity.desc(),
-            func.random()
+            Puzzle.popularity.desc()
         )
         .limit(count * 3)  # Fetch extra for randomness
     )

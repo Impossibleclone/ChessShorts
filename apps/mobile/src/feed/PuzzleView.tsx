@@ -1,4 +1,4 @@
-import React, { useRef, useMemo } from 'react';
+import React, { useCallback, useRef, useMemo } from 'react';
 import { 
   View, 
   Text, 
@@ -21,8 +21,8 @@ type ChessMoveInfo = {
   };
 };
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const BOARD_SIZE = Math.min(SCREEN_WIDTH * 0.92, 380);
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const BOARD_SIZE = Math.min(SCREEN_WIDTH * 0.86, SCREEN_HEIGHT * 0.42, 560);
 
 interface PuzzleViewProps {
   puzzle: Puzzle;
@@ -46,12 +46,13 @@ export const PuzzleView = React.memo(function PuzzleView({ puzzle, isActive, ind
     solutionMoves,
     handleMove,
     toggleSolution,
+    resetPuzzle,
   } = usePuzzleLogic(puzzle, isActive);
 
   const theme = useMemo(() => ({
-    white: '#f0d9b5',
-    black: '#b58863',
-    lastMoveHighlight: '#90ee90',
+    white: '#e8e2c5',
+    black: '#5d6b41',
+    lastMoveHighlight: '#aecfa6',
     checkmateHighlight: '#ff6b6b',
     promotionPieceButton: '#ffe066',
   }), []);
@@ -78,8 +79,20 @@ export const PuzzleView = React.memo(function PuzzleView({ puzzle, isActive, ind
   }, [isActive, fadeAnim, slideAnim]);
 
   const handleMoveWrapper = (info: ChessMoveInfo) => {
-    handleMove(info.move.from, info.move.to, info.move.promotion);
+    const result = handleMove(info.move.from, info.move.to, info.move.promotion);
+    if (result === false) {
+      // Wrong / illegal move: snap the board back to the current position and
+      // clear any stuck piece highlight (selection transform).
+      boardRef.current?.resetBoard(currentFen);
+      boardRef.current?.resetAllHighlightedSquares();
+    }
   };
+
+  const resetPuzzleWithBoard = useCallback(() => {
+    resetPuzzle();
+    boardRef.current?.resetBoard(puzzle.fen);
+    boardRef.current?.resetAllHighlightedSquares();
+  }, [resetPuzzle, puzzle.fen]);
 
   const renderStatus = () => {
     if (solved) {
@@ -154,6 +167,14 @@ export const PuzzleView = React.memo(function PuzzleView({ puzzle, isActive, ind
 
         {renderStatus()}
 
+        {feedback === 'wrong' && (
+          <View style={styles.resetContainer}>
+            <Text style={styles.resetButton} onPress={resetPuzzleWithBoard}>
+              ↺ Reset puzzle
+            </Text>
+          </View>
+        )}
+
         {!solved && (
           <View style={styles.hintContainer}>
             <Text style={styles.hintText}>
@@ -203,6 +224,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 24,
     alignItems: 'center',
+    backgroundColor: '#121212',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#222',
   },
   header: {
     width: '100%',
@@ -307,6 +332,14 @@ const styles = StyleSheet.create({
     color: '#3498db',
     fontSize: 14,
     fontWeight: '500',
+  },
+  resetContainer: {
+    marginTop: 12,
+  },
+  resetButton: {
+    color: '#3498db',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
 
