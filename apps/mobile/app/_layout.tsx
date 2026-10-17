@@ -98,7 +98,7 @@ const steps: { name: string; run: () => string | void }[] = [
   {
     name: 'api client import',
     run: () => {
-      require('@/api').api;
+      require('@/api/client').api;
     },
   },
   {
