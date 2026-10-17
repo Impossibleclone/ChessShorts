@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -21,12 +21,16 @@ type ChessMoveInfo = {
   };
 };
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-// Board scales with both axes so it stays large on tablets (landscape too)
-// without overflowing short viewports.
-const BOARD_SIZE = Math.min(SCREEN_WIDTH * 0.88, SCREEN_HEIGHT * 0.5, 560);
-// Card keeps side margins on every screen instead of going full-bleed.
-const CARD_WIDTH = Math.min(BOARD_SIZE + 56, SCREEN_WIDTH * 0.94);
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// Standard modern green/ivory board scheme (chess.com-style).
+const THEME = {
+  white: '#EEEED2',
+  black: '#769656',
+  lastMoveHighlight: 'rgba(250, 216, 66, 0.55)',
+  checkmateHighlight: '#E84855',
+  promotionPieceButton: '#FFB366',
+};
 
 interface PuzzleCardProps {
   puzzle: Puzzle;
@@ -36,6 +40,53 @@ interface PuzzleCardProps {
   isActive: boolean;
 }
 
+/**
+ * Isolated board subtree: re-renders only when the position or the
+ * orientation changes. Status pills, hint toggles and timers live in the
+ * parent and no longer re-render all 32 pieces on every transient update —
+ * the main fix for piece-drag lag.
+ */
+const PuzzleBoard = React.memo(function PuzzleBoard({
+  fen,
+  boardSize,
+  flipBoard,
+  apiRef,
+  onMove,
+}: {
+  fen: string;
+  boardSize: number;
+  flipBoard: boolean;
+  apiRef: React.MutableRefObject<ChessboardRef | null>;
+  onMove: (from: string, to: string, promotion?: string) => boolean;
+}) {
+  const handleMove = useCallback(
+    (info: ChessMoveInfo) => {
+      const result = onMove(info.move.from, info.move.to, info.move.promotion);
+      if (result === false) {
+        // Wrong/illegal move: snap the board back and clear any stuck
+        // piece selection (the enlarge-and-stick artifact).
+        apiRef.current?.resetBoard(fen);
+        apiRef.current?.resetAllHighlightedSquares();
+      }
+    },
+    [onMove, fen, apiRef],
+  );
+
+  return (
+    <Chessboard
+      ref={apiRef}
+      fen={fen}
+      onMove={handleMove}
+      boardSize={boardSize}
+      colors={THEME}
+      flipBoard={flipBoard}
+      withLetters={true}
+      withNumbers={true}
+      gestureEnabled={true}
+    />
+  );
+});
+
 export const PuzzleCard = React.memo(function PuzzleCard({
   puzzle,
   index,
@@ -43,7 +94,7 @@ export const PuzzleCard = React.memo(function PuzzleCard({
   cardHeight,
   isActive,
 }: PuzzleCardProps) {
-  const boardRef = useRef<ChessboardRef>(null);
+  const apiRef = useRef<ChessboardRef | null>(null);
   const [hintSeen, setHintSeen] = useState(false);
   // Entrance animation — same core-Animated pattern as the proven PuzzleView.
   const fadeAnim = useRef(new Animated.Value(isActive ? 1 : 0)).current;
@@ -51,10 +102,12 @@ export const PuzzleCard = React.memo(function PuzzleCard({
 
   const {
     currentFen,
+    playerColor,
     feedback,
     step,
     solved,
     showSolution,
+    replying,
     isPlayerTurn,
     expectedMove,
     solutionMoves,
@@ -62,11 +115,6 @@ export const PuzzleCard = React.memo(function PuzzleCard({
     toggleSolution,
     resetPuzzle,
   } = usePuzzleLogic(puzzle, isActive);
-
-  // Re-arm the hint every time the puzzle advances so it never lingers.
-  React.useEffect(() => {
-    setHintSeen(false);
-  }, [step, puzzle.id]);
 
   React.useEffect(() => {
     if (isActive) {
@@ -89,6 +137,11 @@ export const PuzzleCard = React.memo(function PuzzleCard({
     }
   }, [isActive, fadeAnim, slideAnim]);
 
+  // Re-arm the hint every time the puzzle advances so it never lingers.
+  React.useEffect(() => {
+    setHintSeen(false);
+  }, [step, puzzle.id]);
+
   // Shorts-style focus: the centered card is full-size/bright, neighbours
   // scale down and dim while scrolling. Driven natively off the scroll value.
   const inputRange = [
@@ -107,31 +160,18 @@ export const PuzzleCard = React.memo(function PuzzleCard({
     extrapolate: 'clamp',
   });
 
-  const theme = {
-    white: '#e8e2c5',
-    black: '#5d6b41',
-    lastMoveHighlight: '#aecfa6',
-    checkmateHighlight: '#ff6b6b',
-    promotionPieceButton: '#ffe066',
-  };
-
-  const handleMoveWrapper = useCallback(
-    (info: ChessMoveInfo) => {
-      const result = handleMove(info.move.from, info.move.to, info.move.promotion);
-      if (result === false) {
-        // Wrong / illegal move: snap the board back to the current position
-        // and clear any stuck piece highlight (selection transform).
-        boardRef.current?.resetBoard(currentFen);
-        boardRef.current?.resetAllHighlightedSquares();
-      }
-    },
-    [handleMove, currentFen],
+  // Nearly edge-to-edge: bounded by viewport width (tiny margins) and by
+  // viewport height so status/hint chrome always fits below the board.
+  const boardSize = Math.max(
+    120,
+    Math.min(Math.floor(cardHeight * 0.54), SCREEN_WIDTH - 44),
   );
+  const cardWidth = boardSize + 36;
 
   const resetPuzzleWithBoard = useCallback(() => {
     resetPuzzle();
-    boardRef.current?.resetBoard(puzzle.fen);
-    boardRef.current?.resetAllHighlightedSquares();
+    apiRef.current?.resetBoard(puzzle.fen);
+    apiRef.current?.resetAllHighlightedSquares();
   }, [resetPuzzle, puzzle.fen]);
 
   const renderStatus = () => {
@@ -140,7 +180,8 @@ export const PuzzleCard = React.memo(function PuzzleCard({
         <View style={[styles.statusContainer, styles.statusSolved]}>
           <Text style={styles.statusText}>🎉 Solved!</Text>
           <Text style={styles.statusSubtext}>
-            {solutionMoves.length / 2} move{solutionMoves.length > 2 ? 's' : ''} •{' '}
+            {Math.ceil(solutionMoves.length / 2)} move
+            {Math.ceil(solutionMoves.length / 2) > 1 ? 's' : ''} •{' '}
             {puzzle.themes.join(', ')}
           </Text>
         </View>
@@ -166,7 +207,7 @@ export const PuzzleCard = React.memo(function PuzzleCard({
     return (
       <View style={styles.statusContainer}>
         <Text style={styles.statusText}>
-          {isPlayerTurn ? 'Your move' : 'Opponent thinking...'}
+          {replying ? 'Opponent is replying…' : 'Your move'}
         </Text>
         <Text style={styles.statusSubtext}>
           {puzzle.themes.join(' · ')} · Rating: {puzzle.rating}
@@ -181,6 +222,7 @@ export const PuzzleCard = React.memo(function PuzzleCard({
         <Animated.View
           style={[
             styles.card,
+            { width: cardWidth },
             {
               opacity: fadeAnim,
               transform: [{ translateY: slideAnim }],
@@ -188,27 +230,32 @@ export const PuzzleCard = React.memo(function PuzzleCard({
           ]}
         >
           <View style={styles.badgeRow}>
-            <Pressable style={styles.badge} onPress={resetPuzzleWithBoard}>
-              <Text style={styles.badgeText}>↺ Reset</Text>
-            </Pressable>
+            <View style={styles.sideChip}>
+              <View
+                style={[
+                  styles.sideDot,
+                  playerColor === 'b' && styles.sideDotBlack,
+                ]}
+              />
+              <Text style={styles.badgeText}>
+                You play {playerColor === 'w' ? 'White' : 'Black'}
+              </Text>
+            </View>
             <View style={styles.badge}>
               <Text style={styles.badgeText}>#{index + 1}</Text>
             </View>
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{puzzle.rating}</Text>
-            </View>
+            <Pressable style={styles.badge} onPress={resetPuzzleWithBoard}>
+              <Text style={styles.badgeText}>↺ Reset</Text>
+            </Pressable>
           </View>
 
           <View style={styles.boardWrapper}>
-            <Chessboard
-              ref={boardRef}
+            <PuzzleBoard
               fen={currentFen}
-              onMove={handleMoveWrapper}
-              boardSize={BOARD_SIZE}
-              colors={theme}
-              withLetters={true}
-              withNumbers={true}
-              gestureEnabled={true}
+              boardSize={boardSize}
+              flipBoard={playerColor === 'b'}
+              apiRef={apiRef}
+              onMove={handleMove}
             />
           </View>
 
@@ -232,17 +279,17 @@ export const PuzzleCard = React.memo(function PuzzleCard({
                     {hintSeen ? 'Hide hint' : '💡 Hint'}
                   </Text>
                 </Pressable>
+                {hintSeen && expectedMove ? (
+                  <Text style={styles.hintRevealInline}>
+                    💡 A piece of yours sits on {expectedMove.slice(0, 2)}
+                  </Text>
+                ) : null}
               </View>
             ) : (
               <View style={styles.hintContainer}>
-                <Text style={styles.hintText}>Opponent is replying…</Text>
+                <Text style={styles.hintText}>Opponent to move…</Text>
               </View>
             ))}
-          {!solved && hintSeen && expectedMove ? (
-            <Text style={styles.hintRevealText}>
-              💡 Try the piece on {expectedMove.slice(0, 2)}
-            </Text>
-          ) : null}
 
           {solved && (
             <View style={styles.solutionContainer}>
@@ -257,7 +304,7 @@ export const PuzzleCard = React.memo(function PuzzleCard({
               </Text>
               <Pressable onPress={toggleSolution} style={styles.showSolutionButton}>
                 <Text style={styles.showSolutionText}>
-                  {showSolution ? 'Hide Solution' : 'Show Full Line'}
+                  {showSolution ? 'Hide Full Line' : 'Show Full Line'}
                 </Text>
               </Pressable>
             </View>
@@ -268,6 +315,8 @@ export const PuzzleCard = React.memo(function PuzzleCard({
   );
 });
 
+PuzzleCard.displayName = 'PuzzleCard';
+
 const styles = StyleSheet.create({
   page: {
     width: '100%',
@@ -276,14 +325,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#0a0a0a',
   },
   card: {
-    width: CARD_WIDTH,
     alignItems: 'center',
-    backgroundColor: '#131313',
-    borderRadius: 20,
+    backgroundColor: '#121214',
+    borderRadius: 22,
     borderWidth: 1,
-    borderColor: '#232323',
-    paddingHorizontal: 20,
-    paddingVertical: 22,
+    borderColor: '#26262a',
+    paddingHorizontal: 18,
+    paddingVertical: 16,
     shadowColor: '#000',
     shadowOpacity: 0.55,
     shadowRadius: 24,
@@ -293,17 +341,40 @@ const styles = StyleSheet.create({
   badgeRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 14,
+    marginBottom: 12,
   },
   badge: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#1c1c20',
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#2c2c2c',
+    borderColor: '#2c2c32',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  sideChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1c1c20',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2c2c32',
+  },
+  sideDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#f5f5f4',
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+  },
+  sideDotBlack: {
+    backgroundColor: '#18181b',
+    borderColor: '#52525b',
   },
   badgeText: {
     color: '#e5e5e5',
@@ -311,22 +382,22 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   boardWrapper: {
-    borderRadius: 12,
+    borderRadius: 14,
     overflow: 'hidden',
     borderWidth: 3,
-    borderColor: '#2b2b2b',
+    borderColor: '#2b2b30',
     shadowColor: '#000',
     shadowOpacity: 0.4,
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 9 },
     elevation: 8,
-    marginBottom: 18,
+    marginBottom: 16,
     backgroundColor: '#fff',
   },
   statusContainer: {
     alignItems: 'center',
-    marginBottom: 14,
-    minHeight: 50,
+    marginBottom: 12,
+    minHeight: 48,
     justifyContent: 'center',
   },
   statusText: {
@@ -341,19 +412,19 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   statusCorrect: {
-    backgroundColor: 'rgba(46, 204, 113, 0.15)',
+    backgroundColor: 'rgba(52, 211, 153, 0.15)',
     borderRadius: 12,
     paddingHorizontal: 24,
     paddingVertical: 8,
   },
   statusWrong: {
-    backgroundColor: 'rgba(231, 76, 60, 0.15)',
+    backgroundColor: 'rgba(248, 113, 113, 0.15)',
     borderRadius: 12,
     paddingHorizontal: 24,
     paddingVertical: 8,
   },
   statusSolved: {
-    backgroundColor: 'rgba(46, 204, 113, 0.2)',
+    backgroundColor: 'rgba(52, 211, 153, 0.2)',
     borderRadius: 12,
     paddingHorizontal: 24,
     paddingVertical: 12,
@@ -369,23 +440,23 @@ const styles = StyleSheet.create({
   hintRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
     gap: 10,
     paddingVertical: 6,
   },
-  hintRevealText: {
+  hintRevealInline: {
     color: '#d4b45a',
-    fontSize: 13.5,
+    fontSize: 13,
     fontWeight: '600',
-    textAlign: 'center',
-    paddingVertical: 4,
   },
   smallButton: {
-    backgroundColor: '#1c1c1c',
+    backgroundColor: '#1c1c20',
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderWidth: 1,
-    borderColor: '#2c2c2c',
+    borderColor: '#2c2c32',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -399,12 +470,12 @@ const styles = StyleSheet.create({
   },
   resetButton: {
     marginTop: 10,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#1c1c20',
     borderRadius: 10,
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: '#2c2c2c',
+    borderColor: '#2c2c32',
   },
   resetButtonText: {
     color: '#4da3ff',
@@ -413,12 +484,12 @@ const styles = StyleSheet.create({
   },
   solutionContainer: {
     width: '100%',
-    backgroundColor: '#101010',
+    backgroundColor: '#0d0d0f',
     borderRadius: 12,
     padding: 16,
     marginTop: 8,
     borderWidth: 1,
-    borderColor: '#232323',
+    borderColor: '#26262a',
   },
   solutionTitle: {
     color: '#fff',

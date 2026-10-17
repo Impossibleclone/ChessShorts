@@ -112,8 +112,8 @@ Because a white-screen-on-start bug has not been reproduced from logs yet, `app/
 
 ### Puzzle line format (Lichess)
 
-- `FEN` before the player's first move, `Moves` = space-delimited UCI list starting with the player move: `[player, opponent, player, …]`
-- Client validates each player move via chess.js and auto-plays opponent replies; solved when the sequence is complete.
+- `Moves` = space-delimited UCI starting with the **opponent's "needle" move**: `[opponent, player, opponent, …]`. The stored `FEN` is one half-move **before** the needle (it is the opponent's turn there). This is verified from the raw database — parity test on `mateIn1/2/3` gives lengths 2/4/6.
+- The client auto-plays the needle on setup (so the solver always gets their color to move), orients the board to the solver via the patched `flipBoard` prop on `react-native-chessboard`, validates each player move with chess.js, and auto-plays opponent replies ~0.4 s later. Solved when the full line (post-needle) is played.
 
 ## Environment
 

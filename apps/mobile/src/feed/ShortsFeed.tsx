@@ -262,9 +262,9 @@ const styles = StyleSheet.create({
     opacity: 0.92,
   },
   counter: {
-    color: '#8f8f96',
+    color: '#d4b45a',
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   swipeHint: {
     position: 'absolute',
